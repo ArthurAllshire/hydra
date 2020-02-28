@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional, Sequence
 import os
+import time
 import sys
 
 from omegaconf import DictConfig, open_dict
@@ -69,4 +70,5 @@ class SlurmLauncher(Launcher):
             slurm_utils.launch_job(sweep_config)
 
             configure_log(self.config.hydra.hydra_logging, self.config.hydra.verbose)
+            time.sleep(1)
         return runs

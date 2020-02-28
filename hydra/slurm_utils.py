@@ -3,6 +3,7 @@ import logging
 import subprocess
 import datetime
 import sys
+import time
 
 from hydra import utils
 from pathlib import Path
@@ -17,8 +18,8 @@ ssd = '/scratch/ssd001/home/' + user
 date = datetime.datetime.now().strftime("%Y-%m-%d")
 
 def eval_val(val):
-    if 'eval' in str(val):
-        return str(eval(val.split(':', 1)[1]))
+    if 'eval:' in str(val):
+        return str(eval(val.split('eval:', 1)[1]))
     else:
         return val
 
@@ -54,6 +55,8 @@ def write_slurm(cfg):
 #SBATCH --mem={4}
 #SBATCH --gres=gpu:{5}
 #SBATCH --nodes=1
+#SBATCH --qos={6}
+#SBATCH --exclude={7}
 
 bash {1}/scripts/{0}.sh
 """.format(
@@ -62,7 +65,9 @@ bash {1}/scripts/{0}.sh
             cfg.slurm.partition,
             eval_val(cfg.slurm.cpu),
             eval_val(cfg.slurm.mem),
-            cfg.slurm.gpu
+            cfg.slurm.gpu,
+            cfg.slurm.qos,
+            cfg.slurm.exclude
         ))
 
 def write_sh(cfg, overrides):
@@ -77,27 +82,33 @@ def write_sh(cfg, overrides):
     if not os.path.exists(scripts_dir):
         Path(scripts_dir).mkdir(parents=True, exist_ok=True)
 
+    if 'venv' in cfg.slurm:
+        venv_sh = '. /h/$USER/venv/{}/bin/activate'.format(cfg.slurm.venv)
+    else:
+        venv_sh = ''
+
     with open(os.path.join(j_dir, "scripts", resolve_name(cfg.slurm.name) + '.sh'), 'w') as shf:
         shf.write(
 """#!/bin/bash
 ln -s /checkpoint/$USER/$SLURM_JOB_ID {0}/$SLURM_JOB_ID
 touch {0}/$SLURM_JOB_ID/DELAYPURGE
-. /h/$USER/venv/{2}/bin/activate
+{2}
 python3 {3} {4}
 """.format(
             j_dir,
             hydra_cwd,
-            cfg.slurm.venv,
+            venv_sh,
             exec_path,
             overrides
         ))
 
 def symlink_hydra(cfg, cwd):
     hydra_dir = os.path.join(get_j_dir(cfg), 'conf')
-    log.info('Symlinking {} : {}'.format(cwd, hydra_dir))
-    if not os.path.exists(hydra_dir):
-        Path(hydra_dir).mkdir(parents=True, exist_ok=True)
-    os.symlink(cwd, os.path.join(hydra_dir, os.environ['SLURM_JOB_ID']), target_is_directory=True)
+    if not os.path.exists(os.path.join(hydra_dir, os.environ['SLURM_JOB_ID'])):
+        log.info('Symlinking {} : {}'.format(cwd, hydra_dir))
+        if not os.path.exists(hydra_dir):
+            Path(hydra_dir).mkdir(parents=True, exist_ok=True)
+        os.symlink(cwd, os.path.join(hydra_dir, os.environ['SLURM_JOB_ID']), target_is_directory=True)
 
 def launch_job(cfg):
 
@@ -110,5 +121,7 @@ def launch_job(cfg):
     # launch safe only when < 100 jobs running
     num_running = int(subprocess.run('squeue -u $USER | grep R | wc -l', shell=True, stdout=subprocess.PIPE).stdout.decode('utf-8'))
     while(num_running > 100):
-        sleep(10)
-    subprocess.run('sbatch {0}/scripts/{1}.slrm --qos normal -x {2}'.format(j_dir, resolve_name(cfg.slurm.name), cfg.slurm.exclude), shell=True)
+        log.info("{} jobs running, waiting to run more...".format(num_running))
+        time.sleep(10)
+        num_running = int(subprocess.run('squeue -u $USER | grep R | wc -l', shell=True, stdout=subprocess.PIPE).stdout.decode('utf-8'))
+    subprocess.run('sbatch {0}/scripts/{1}.slrm'.format(j_dir, resolve_name(cfg.slurm.name)), shell=True)
