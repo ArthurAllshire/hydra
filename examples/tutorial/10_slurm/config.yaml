@@ -1,0 +1,16 @@
+defaults:
+  - hydra/launcher: slurm
+
+slurm:
+  partition: gpu
+  exclude: gpu070
+  qos: normal
+  gpu: 1
+  cpu: eval:4*${slurm.gpu}
+  mem: eval:str(22*${slurm.gpu})+'G'
+  name:
+    - eval:sys.argv[0][:-3].split('/')[-1]
+
+my_configs:
+  lr: 0.01
+  batch_size: 10
