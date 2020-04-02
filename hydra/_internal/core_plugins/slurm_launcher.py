@@ -63,7 +63,7 @@ class SlurmLauncher(Launcher):
                 sweep_config.hydra.job.num = idx
             HydraConfig.instance().set_config(sweep_config)
 
-            log.info("\tJob name : {}".format(slurm_utils.resolve_name(sweep_config.slurm.name)))
+            log.info("\tJob name : {}".format(slurm_utils.resolve_name(sweep_config.slurm.job_name)))
 
             slurm_utils.write_slurm(sweep_config)
             slurm_utils.write_sh(sweep_config, " ".join(filter_overrides(overrides)))

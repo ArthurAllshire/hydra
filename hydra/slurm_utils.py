@@ -7,7 +7,7 @@ import time
 
 from hydra import utils
 from pathlib import Path
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, listconfig
 
 user = os.environ['USER']
 log = logging.getLogger(__name__)
@@ -21,14 +21,17 @@ def eval_val(val):
     if 'eval:' in str(val):
         return str(eval(val.split('eval:', 1)[1]))
     else:
-        return val
+        return str(val)
 
 def resolve_name(name):
-    name_list = [eval_val(str(name[i])) for i in range(len(name)) if name[i] != None]
-    return '_'.join(name_list)
+    if isinstance(name, listconfig.ListConfig):
+        name_list = [eval_val(str(name[i])) for i in range(len(name)) if name[i] != None]
+        return '_'.join(name_list)
+    else:
+        return eval_val(name)
 
 def get_j_dir(cfg):
-    return os.path.join(ssd, "slurm", date, resolve_name(cfg.slurm.name))
+    return os.path.join(ssd, "slurm", date, resolve_name(cfg.slurm.job_name))
 
 def get_data_dir(cfg):
     return os.path.join('/scratch', 'ssd001', 'datasets', 'cfg.data.task', 'cfg.data.name')
@@ -42,33 +45,19 @@ def write_slurm(cfg):
     if not os.path.exists(scripts_dir):
         Path(scripts_dir).mkdir(parents=True, exist_ok=True)
 
-    # write slurm file
-    with open(os.path.join(j_dir, "scripts", resolve_name(cfg.slurm.name) + '.slrm'), 'w') as slrmf:
-        slrmf.write(
-"""#!/bin/bash
-#SBATCH --job-name={0}#
-#SBATCH --output={1}/log/%j.out
-#SBATCH --error={1}/log/%j.err
-#SBATCH --partition={2}
-#SBATCH --cpus-per-task={3}
-#SBATCH --ntasks-per-node=1
-#SBATCH --mem={4}
-#SBATCH --gres=gpu:{5}
-#SBATCH --nodes=1
-#SBATCH --qos={6}
-#SBATCH --exclude={7}
+    slurm_opts = ['#SBATCH --' + k.replace('_','-') + '=' + resolve_name(v) for k, v in cfg.slurm.items() if v != None]
 
-bash {1}/scripts/{0}.sh
-""".format(
-            resolve_name(cfg.slurm.name),
-            j_dir,
-            cfg.slurm.partition,
-            eval_val(cfg.slurm.cpu),
-            eval_val(cfg.slurm.mem),
-            cfg.slurm.gpu,
-            cfg.slurm.qos,
-            cfg.slurm.exclude
-        ))
+    # default output and error directories
+    if not hasattr(cfg.slurm, 'output'):
+        slurm_opts.append('#SBATCH --output={}/log/%j.out'.format(j_dir))
+    if not hasattr(cfg.slurm, 'error'):
+        slurm_opts.append('#SBATCH --error={}/log/%j.err'.format(j_dir))
+
+    slurm_opts = ['#!/bin/bash'] + slurm_opts + ['bash {0}/scripts/{1}.sh'.format(j_dir, resolve_name(cfg.slurm.job_name))]
+
+    # write slurm file
+    with open(os.path.join(j_dir, "scripts", resolve_name(cfg.slurm.job_name) + '.slrm'), 'w') as slrmf:
+        slrmf.write('\n'.join(slurm_opts))
 
 def write_sh(cfg, overrides):
 
@@ -87,7 +76,7 @@ def write_sh(cfg, overrides):
     else:
         venv_sh = ''
 
-    with open(os.path.join(j_dir, "scripts", resolve_name(cfg.slurm.name) + '.sh'), 'w') as shf:
+    with open(os.path.join(j_dir, "scripts", resolve_name(cfg.slurm.job_name) + '.sh'), 'w') as shf:
         shf.write(
 """#!/bin/bash
 ln -s /checkpoint/$USER/$SLURM_JOB_ID {0}/$SLURM_JOB_ID
@@ -124,4 +113,4 @@ def launch_job(cfg):
         log.info("{} jobs running, waiting to run more...".format(num_running))
         time.sleep(10)
         num_running = int(subprocess.run('squeue -u $USER | grep R | wc -l', shell=True, stdout=subprocess.PIPE).stdout.decode('utf-8'))
-    subprocess.run('sbatch {0}/scripts/{1}.slrm'.format(j_dir, resolve_name(cfg.slurm.name)), shell=True)
+    subprocess.run('sbatch {0}/scripts/{1}.slrm'.format(j_dir, resolve_name(cfg.slurm.job_name)), shell=True)
