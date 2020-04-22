@@ -9,29 +9,32 @@ import pytest
 from omegaconf import OmegaConf
 
 from hydra import MissingConfigException
-
-# noinspection PyUnresolvedReferences
-from hydra.test_utils.test_utils import (  # noqa: F401
+from hydra.test_utils.test_utils import (
     TSweepRunner,
     TTaskRunner,
     chdir_hydra_root,
-    sweep_runner,
-    task_runner,
+    integration_test,
     verify_dir_outputs,
 )
 
 chdir_hydra_root()
 
 
-@pytest.mark.parametrize("calling_file, calling_module", [(".", None), (None, ".")])  # type: ignore
+@pytest.mark.parametrize(  # type: ignore
+    "calling_file, calling_module", [(".", None), (None, ".")]
+)
 def test_missing_conf_dir(
-    task_runner: TTaskRunner, calling_file: str, calling_module: str  # noqa: F811
+    restore_singletons: Any,
+    task_runner: TTaskRunner,
+    calling_file: str,
+    calling_module: str,
 ) -> None:
     with pytest.raises(MissingConfigException):
         with task_runner(
             calling_file=calling_file,
             calling_module=calling_module,
             config_path="dir_not_found",
+            config_name=None,
         ):
             pass
 
@@ -44,13 +47,17 @@ def test_missing_conf_dir(
     ],
 )
 def test_missing_conf_file(
-    task_runner: TTaskRunner, calling_file: str, calling_module: str  # noqa: F811
+    restore_singletons: Any,
+    task_runner: TTaskRunner,
+    calling_file: str,
+    calling_module: str,
 ) -> None:
     with pytest.raises(MissingConfigException):
         with task_runner(
             calling_file=calling_file,
             calling_module=calling_module,
             config_path="not_found.yaml",
+            config_name=None,
         ):
             pass
 
@@ -63,10 +70,39 @@ def test_missing_conf_file(
     ],
 )
 def test_app_without_config___no_overrides(
-    task_runner: TTaskRunner, calling_file: str, calling_module: str  # noqa: F811
+    restore_singletons: Any,
+    task_runner: TTaskRunner,
+    calling_file: str,
+    calling_module: str,
 ) -> None:
     with task_runner(
-        calling_file=calling_file, calling_module=calling_module, config_path=None
+        calling_file=calling_file,
+        calling_module=calling_module,
+        config_path=None,
+        config_name=None,
+    ) as task:
+        assert task.job_ret is not None
+        assert task.job_ret.cfg == {}
+
+
+@pytest.mark.parametrize(  # type: ignore
+    "calling_file, calling_module",
+    [
+        ("tests/test_apps/hydra_main_rerun/my_app.py", None),
+        (None, "tests.test_apps.hydra_main_rerun.my_app"),
+    ],
+)
+def test_hydra_main_rerun(
+    restore_singletons: Any,
+    task_runner: TTaskRunner,
+    calling_file: str,
+    calling_module: str,
+) -> None:
+    with task_runner(
+        calling_file=calling_file,
+        calling_module=calling_module,
+        config_path=None,
+        config_name=None,
     ) as task:
         assert task.job_ret is not None
         assert task.job_ret.cfg == {}
@@ -80,12 +116,16 @@ def test_app_without_config___no_overrides(
     ],
 )
 def test_app_without_config__with_overrides(
-    task_runner: TTaskRunner, calling_file: str, calling_module: str  # noqa: F811
+    restore_singletons: Any,
+    task_runner: TTaskRunner,
+    calling_file: str,
+    calling_module: str,
 ) -> None:
     with task_runner(
         calling_file=calling_file,
         calling_module=calling_module,
         config_path="",
+        config_name=None,
         overrides=["abc=123", "a.b=1", "a.a=2"],
     ) as task:
         assert task.job_ret is not None and task.job_ret.cfg == dict(
@@ -102,17 +142,50 @@ def test_app_without_config__with_overrides(
     ],
 )
 def test_app_with_config_file__no_overrides(
-    task_runner: TTaskRunner, calling_file: str, calling_module: str  # noqa: F811
+    restore_singletons: Any,
+    task_runner: TTaskRunner,
+    calling_file: str,
+    calling_module: str,
+) -> None:
+
+    task = task_runner(
+        calling_file=calling_file,
+        calling_module=calling_module,
+        config_path=None,  # Testing legacy mode, both path and named are in config_path
+        config_name="config.yaml",
+    )
+    with task:
+        assert task.job_ret is not None and task.job_ret.cfg == {
+            "dataset": {"name": "imagenet", "path": "/datasets/imagenet"}
+        }
+
+        verify_dir_outputs(task.job_ret)
+
+
+@pytest.mark.parametrize(  # type: ignore
+    "calling_file, calling_module",
+    [
+        ("tests/test_apps/app_with_cfg_groups/my_app.py", None),
+        (None, "tests.test_apps.app_with_cfg_groups.my_app"),
+    ],
+)
+def test_app_with_config_path_backward_compatibility(
+    restore_singletons: Any,
+    task_runner: TTaskRunner,
+    calling_file: str,
+    calling_module: str,
 ) -> None:
     task = task_runner(
         calling_file=calling_file,
         calling_module=calling_module,
-        config_path="config.yaml",
+        config_path="conf/config.yaml",  # Testing legacy mode, both path and named are in config_path
+        config_name=None,
     )
     with task:
-        assert task.job_ret is not None and task.job_ret.cfg == dict(
-            dataset=dict(name="imagenet", path="/datasets/imagenet")
-        )
+
+        assert task.job_ret is not None and task.job_ret.cfg == {
+            "optimizer": {"type": "nesterov", "lr": 0.001}
+        }
 
         verify_dir_outputs(task.job_ret)
 
@@ -125,12 +198,16 @@ def test_app_with_config_file__no_overrides(
     ],
 )
 def test_app_with_config_file__with_overide(
-    task_runner: TTaskRunner, calling_file: str, calling_module: str  # noqa: F811
+    restore_singletons: Any,
+    task_runner: TTaskRunner,
+    calling_file: str,
+    calling_module: str,
 ) -> None:
     with task_runner(
         calling_file=calling_file,
         calling_module=calling_module,
-        config_path="config.yaml",
+        config_path=None,
+        config_name="config.yaml",
         overrides=["dataset.path=/datasets/imagenet2"],
     ) as task:
         assert task.job_ret is not None and task.job_ret.cfg == dict(
@@ -147,12 +224,16 @@ def test_app_with_config_file__with_overide(
     ],
 )
 def test_app_with_split_config(
-    task_runner: TTaskRunner, calling_file: str, calling_module: str  # noqa: F811
+    restore_singletons: Any,
+    task_runner: TTaskRunner,
+    calling_file: str,
+    calling_module: str,
 ) -> None:
     with task_runner(
         calling_file=calling_file,
         calling_module=calling_module,
-        config_path="config.yaml",
+        config_path=None,
+        config_name="config.yaml",
     ) as task:
         assert task.job_ret is not None and task.job_ret.cfg == dict(
             dataset=dict(name="imagenet", path="/datasets/imagenet"),
@@ -169,13 +250,17 @@ def test_app_with_split_config(
     ],
 )
 def test_app_with_config_groups__override_dataset__wrong(
-    task_runner: TTaskRunner, calling_file: str, calling_module: str  # noqa: F811
+    restore_singletons: Any,
+    task_runner: TTaskRunner,
+    calling_file: str,
+    calling_module: str,
 ) -> None:
     with pytest.raises(MissingConfigException) as ex:
         with task_runner(
             calling_file=calling_file,
             calling_module=calling_module,
             config_path="conf",
+            config_name=None,
             overrides=["optimizer=wrong_name"],
         ):
             pass
@@ -190,12 +275,16 @@ def test_app_with_config_groups__override_dataset__wrong(
     ],
 )
 def test_app_with_config_groups__override_all_configs(
-    task_runner: TTaskRunner, calling_file: str, calling_module: str  # noqa: F811
+    restore_singletons: Any,
+    task_runner: TTaskRunner,
+    calling_file: str,
+    calling_module: str,
 ) -> None:
     with task_runner(
         calling_file=calling_file,
         calling_module=calling_module,
         config_path="conf",
+        config_name=None,
         overrides=["optimizer=adam", "optimizer.lr=10"],
     ) as task:
         assert task.job_ret is not None and task.job_ret.cfg == dict(
@@ -212,33 +301,79 @@ def test_app_with_config_groups__override_all_configs(
     ],
 )
 def test_app_with_sweep_cfg__override_to_basic_launcher(
-    task_runner: TTaskRunner, calling_file: str, calling_module: str  # noqa: F811
+    restore_singletons: Any,
+    task_runner: TTaskRunner,
+    calling_file: str,
+    calling_module: str,
 ) -> None:
     with task_runner(
         calling_file=calling_file,
         calling_module=calling_module,
-        config_path="config.yaml",
+        config_path=None,
+        config_name="config.yaml",
         overrides=["hydra/launcher=basic"],
     ) as task:
         assert task.job_ret is not None
         assert task.job_ret.hydra_cfg is not None
         hydra_cfg = task.job_ret.hydra_cfg
         assert (
-            hydra_cfg.hydra.launcher["class"]
+            hydra_cfg.hydra.launcher.cls
             == "hydra._internal.core_plugins.basic_launcher.BasicLauncher"
         )
-        assert "params" not in task.job_ret.hydra_cfg.hydra.launcher
+        assert len(task.job_ret.hydra_cfg.hydra.launcher.params) == 0
 
 
 def test_short_module_name(tmpdir: Path) -> None:
     try:
         os.chdir("examples/tutorial/2_config_file")
         cmd = [sys.executable, "my_app.py", "hydra.run.dir=" + str(tmpdir)]
-        modified_env = os.environ.copy()
-        modified_env["HYDRA_MAIN_MODULE"] = "my_app"
-        result = subprocess.check_output(cmd, env=modified_env)
+        result = subprocess.check_output(cmd)
         assert OmegaConf.create(str(result.decode("utf-8"))) == {
             "db": {"driver": "mysql", "pass": "secret", "user": "omry"}
+        }
+    finally:
+        chdir_hydra_root()
+
+
+def test_hydra_main_module_override_name(tmpdir: Path) -> None:
+    cfg = OmegaConf.create()
+    integration_test(
+        tmpdir=tmpdir,
+        task_config=cfg,
+        overrides=[],
+        prints="HydraConfig.get().job.name",
+        expected_outputs="Foo",
+        env_override={"HYDRA_MAIN_MODULE": "hydra.test_utils.configs.Foo"},
+    )
+
+
+def test_short_hydra_main_module_override_name(tmpdir: Path) -> None:
+    cfg = OmegaConf.create()
+    integration_test(
+        tmpdir=tmpdir,
+        task_config=cfg,
+        overrides=[],
+        prints="HydraConfig.get().job.name",
+        expected_outputs="Foo",
+        env_override={"HYDRA_MAIN_MODULE": "Foo"},
+    )
+
+
+@pytest.mark.parametrize(  # type: ignore
+    "env_name", ["HYDRA_MAIN_MODULE", "FB_PAR_MAIN_MODULE", "FB_XAR_MAIN_MODULE"]
+)
+def test_module_env_override(tmpdir: Path, env_name: str) -> None:
+    """
+    Tests that module name overrides are working.
+    """
+    try:
+        os.chdir("examples/tutorial/2_config_file")
+        cmd = [sys.executable, "my_app.py", "hydra.run.dir=" + str(tmpdir)]
+        modified_env = os.environ.copy()
+        modified_env[env_name] = "hydra.test_utils.configs.Foo"
+        result = subprocess.check_output(cmd, env=modified_env)
+        assert OmegaConf.create(str(result.decode("utf-8"))) == {
+            "normal_yaml_config": True
         }
     finally:
         chdir_hydra_root()
@@ -269,7 +404,8 @@ def test_cfg(tmpdir: Path, flag: str, expected_keys: List[str]) -> None:
 )
 @pytest.mark.parametrize("overrides", [["free_group=opt1,opt2"]])  # type: ignore
 def test_multirun_with_free_override(
-    sweep_runner: TSweepRunner,  # noqa: F811
+    restore_singletons: Any,
+    sweep_runner: TSweepRunner,
     calling_file: str,
     calling_module: str,
     overrides: List[str],
@@ -277,7 +413,9 @@ def test_multirun_with_free_override(
     sweep = sweep_runner(
         calling_file=calling_file,
         calling_module=calling_module,
-        config_path="conf/config.yaml",
+        config_path="conf/",
+        config_name="config.yaml",
+        task_function=None,
         overrides=overrides,
         strict=True,
     )
@@ -292,17 +430,26 @@ def test_multirun_with_free_override(
 @pytest.mark.parametrize(  # type: ignore
     "calling_file, calling_module",
     [
-        ("tests/test_apps/sweep_complex_defaults/my_app.py", None),
-        (None, "tests.test_apps.sweep_complex_defaults.my_app"),
+        pytest.param(
+            "tests/test_apps/sweep_complex_defaults/my_app.py", None, id="file_path"
+        ),
+        pytest.param(
+            None, "tests.test_apps.sweep_complex_defaults.my_app", id="pkg_path"
+        ),
     ],
 )
 def test_sweep_complex_defaults(
-    sweep_runner: TSweepRunner, calling_file: str, calling_module: str  # noqa: F811
+    restore_singletons: Any,
+    sweep_runner: TSweepRunner,
+    calling_file: str,
+    calling_module: str,
 ) -> None:
     with sweep_runner(
         calling_file=calling_file,
         calling_module=calling_module,
-        config_path="conf/config.yaml",
+        config_path="conf",
+        config_name="config.yaml",
+        task_function=None,
         overrides=["optimizer=adam,nesterov"],
     ) as sweep:
         assert sweep.returns is not None and len(sweep.returns[0]) == 2
@@ -404,13 +551,17 @@ def test_help(
     ],
 )
 def test_interpolating_dir_hydra_to_app(
-    task_runner: TTaskRunner, calling_file: str, calling_module: str  # noqa: F811
+    restore_singletons: Any,
+    task_runner: TTaskRunner,
+    calling_file: str,
+    calling_module: str,
 ) -> None:
     basedir = "foo"
     with task_runner(
         calling_file=calling_file,
         calling_module=calling_module,
-        config_path="config.yaml",
+        config_path=None,
+        config_name="config.yaml",
         overrides=["experiment.base_dir=" + basedir],
     ) as task:
         assert task.temp_dir is not None

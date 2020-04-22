@@ -1,6 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-import pytest
-
+import pytest  # type: ignore
 from hydra.core.plugins import Plugins
 from hydra.plugins.launcher import Launcher
 from hydra.test_utils.launcher_common_tests import (
@@ -8,15 +7,14 @@ from hydra.test_utils.launcher_common_tests import (
     LauncherTestSuite,
 )
 
-# This has to be included here for the LauncherTestSuite to work.
-# noinspection PyUnresolvedReferences
-from hydra.test_utils.test_utils import sweep_runner  # noqa: F401
-from hydra_plugins.example_launcher_plugin import ExampleLauncher
+from hydra_plugins.example_launcher_plugin.example_launcher import ExampleLauncher
 
 
 def test_discovery() -> None:
     # Tests that this plugin can be discovered via the plugins subsystem when looking for Launchers
-    assert ExampleLauncher.__name__ in [x.__name__ for x in Plugins.discover(Launcher)]
+    assert ExampleLauncher.__name__ in [
+        x.__name__ for x in Plugins.instance().discover(Launcher)
+    ]
 
 
 @pytest.mark.parametrize("launcher_name, overrides", [("example", [])])
@@ -30,7 +28,7 @@ class TestExampleLauncher(LauncherTestSuite):
 
 
 @pytest.mark.parametrize(
-    "task_launcher_cfg, extra_flags, plugin_module",
+    "task_launcher_cfg, extra_flags",
     [
         (
             {
@@ -41,13 +39,12 @@ class TestExampleLauncher(LauncherTestSuite):
                 ],
                 "hydra": {
                     "launcher": {
-                        "class": "hydra_plugins.example_launcher_plugin.ExampleLauncher",
+                        "cls": "hydra_plugins.example_launcher_plugin.example_launcher.ExampleLauncher",
                         "params": {"foo": 10, "bar": "abcde"},
                     }
                 },
             },
             ["-m"],
-            "hydra_plugins.example_launcher",
         )
     ],
 )

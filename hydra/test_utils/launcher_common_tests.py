@@ -3,9 +3,8 @@
 Common test functions testing launchers
 """
 import copy
-import importlib
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Set
 
 import pytest
 from omegaconf import DictConfig, OmegaConf
@@ -17,9 +16,10 @@ from hydra.test_utils.test_utils import (
 )
 
 
+@pytest.mark.usefixtures("restore_singletons")
 class LauncherTestSuite:
     def test_sweep_1_job(
-        self, sweep_runner: TSweepRunner, launcher_name: str, overrides: List[str]
+        self, sweep_runner: TSweepRunner, launcher_name: str, overrides: List[str],
     ) -> None:
         sweep_1_job(
             sweep_runner,
@@ -29,21 +29,21 @@ class LauncherTestSuite:
 
     def test_sweep_2_jobs(
         self, sweep_runner: TSweepRunner, launcher_name: str, overrides: List[str]
-    ) -> None:  # noqa: F811
+    ) -> None:
         sweep_2_jobs(
             sweep_runner, overrides=["hydra/launcher=" + launcher_name] + overrides
         )
 
     def test_not_sweeping_hydra_overrides(
         self, sweep_runner: TSweepRunner, launcher_name: str, overrides: List[str]
-    ) -> None:  # noqa: F811
+    ) -> None:
         not_sweeping_hydra_overrides(
             sweep_runner, overrides=["hydra/launcher=" + launcher_name] + overrides
         )
 
     def test_sweep_1_job_strict(
         self, sweep_runner: TSweepRunner, launcher_name: str, overrides: List[str]
-    ) -> None:  # noqa: F811
+    ) -> None:
         sweep_1_job(
             sweep_runner,
             strict=True,
@@ -52,7 +52,7 @@ class LauncherTestSuite:
 
     def test_sweep_1_job_strict_and_bad_key(
         self, sweep_runner: TSweepRunner, launcher_name: str, overrides: List[str]
-    ) -> None:  # noqa: F811
+    ) -> None:
         # Ideally this would be KeyError, This can't be more specific because some launcher plugins
         # like submitit raises a different exception on job failure and not the underlying exception.
         with pytest.raises(Exception):
@@ -70,16 +70,15 @@ class LauncherTestSuite:
         )
 
     def test_sweep_over_unspecified_mandatory_default(
-        self,
-        sweep_runner: TSweepRunner,  # noqa: F811
-        launcher_name: str,
-        overrides: List[str],
+        self, sweep_runner: TSweepRunner, launcher_name: str, overrides: List[str],
     ) -> None:
         base_overrides = ["hydra/launcher=" + launcher_name, "group1=file1,file2"]
         sweep = sweep_runner(
             calling_file=None,
             calling_module="hydra.test_utils.a_module",
-            config_path="configs/unspecified_mandatory_default.yaml",
+            task_function=None,
+            config_path="configs",
+            config_name="unspecified_mandatory_default",
             overrides=base_overrides + overrides,
             strict=True,
         )
@@ -96,7 +95,7 @@ class LauncherTestSuite:
 
     def test_sweep_and_override(
         self, sweep_runner: TSweepRunner, launcher_name: str, overrides: List[str]
-    ) -> None:  # noqa: F811
+    ) -> None:
         """
         Tests that we can override things in the configs merged in only during the sweep config construction
         db.user=someone does not exist db_conf.yaml, and is only appear when we merge in db=mysql or db=postgresql.
@@ -110,7 +109,9 @@ class LauncherTestSuite:
         sweep = sweep_runner(
             calling_file=None,
             calling_module="hydra.test_utils.a_module",
-            config_path="configs/db_conf.yaml",
+            task_function=None,
+            config_path="configs",
+            config_name="db_conf.yaml",
             overrides=base_overrides + overrides,
             strict=True,
         )
@@ -119,12 +120,12 @@ class LauncherTestSuite:
             ["db=postgresql", "db.user=someone"],
         ]
         expected_conf = [
-            {"db": {"driver": "mysql", "pass": "secret", "user": "someone"}},
+            {"db": {"driver": "mysql", "password": "secret", "user": "someone"}},
             {
                 "db": {
                     "user": "someone",
                     "driver": "postgresql",
-                    "pass": "drowssap",
+                    "password": "drowssap",
                     "timeout": 10,
                 }
             },
@@ -139,6 +140,60 @@ class LauncherTestSuite:
                 verify_dir_outputs(job_ret, job_ret.overrides)
 
 
+@pytest.mark.usefixtures("restore_singletons")
+class BatchedSweeperTestSuite:
+    def test_sweep_2_jobs_2_batches(
+        self, sweep_runner: TSweepRunner, launcher_name: str, overrides: List[str],
+    ) -> None:
+        overrides.extend(
+            # order sensitive?
+            ["hydra/launcher=" + launcher_name, "group1=file1,file2", "bar=100,200,300"]
+        )
+        sweep = sweep_runner(
+            calling_file=None,
+            calling_module="hydra.test_utils.a_module",
+            task_function=None,
+            config_path="configs",
+            config_name="compose.yaml",
+            overrides=overrides,
+            strict=True,
+        )
+        expected_overrides = [
+            ["group1=file1", "bar=100"],
+            ["group1=file1", "bar=200"],
+            ["group1=file1", "bar=300"],
+            ["group1=file2", "bar=100"],
+            ["group1=file2", "bar=200"],
+            ["group1=file2", "bar=300"],
+        ]
+
+        expected_conf = [
+            {"foo": 10, "bar": 100},
+            {"foo": 10, "bar": 200},
+            {"foo": 10, "bar": 300},
+            {"foo": 20, "bar": 100},
+            {"foo": 20, "bar": 200},
+            {"foo": 20, "bar": 300},
+        ]
+
+        dirs: Set[str] = set()
+        with sweep:
+            assert sweep.returns is not None
+            # expecting 3 batches of 2
+            assert len(sweep.returns) == 3
+            for batch in sweep.returns:
+                assert len(batch) == 2
+
+            flat = [rt for batch in sweep.returns for rt in batch]
+            assert len(flat) == 6  # with a total of 6 jobs
+            for idx, job_ret in enumerate(flat):
+                assert job_ret.overrides == expected_overrides[idx]
+                assert job_ret.cfg == expected_conf[idx]
+                dirs.add(job_ret.working_dir)
+                verify_dir_outputs(job_ret, job_ret.overrides)
+        assert len(dirs) == 6  # and a total of 6 unique output directories
+
+
 def sweep_1_job(
     sweep_runner: TSweepRunner, overrides: List[str], strict: bool = False
 ) -> None:
@@ -148,7 +203,9 @@ def sweep_1_job(
     sweep = sweep_runner(
         calling_file=None,
         calling_module="hydra.test_utils.a_module",
-        config_path="configs/compose.yaml",
+        task_function=None,
+        config_path="configs",
+        config_name="compose.yaml",
         overrides=overrides,
         strict=strict,
     )
@@ -173,7 +230,9 @@ def sweep_2_jobs(sweep_runner: TSweepRunner, overrides: List[str]) -> None:
     sweep = sweep_runner(
         calling_file=None,
         calling_module="hydra.test_utils.a_module",
+        task_function=None,
         config_path="configs/compose.yaml",
+        config_name=None,
         overrides=overrides,
     )
     base = OmegaConf.create({"foo": 10, "bar": 100, "a": 0})
@@ -210,7 +269,9 @@ def not_sweeping_hydra_overrides(
     sweep = sweep_runner(
         calling_file=None,
         calling_module="hydra.test_utils.a_module",
-        config_path="configs/compose.yaml",
+        task_function=None,
+        config_path="configs",
+        config_name="compose.yaml",
         overrides=overrides,
         strict=None,
     )
@@ -238,7 +299,9 @@ def sweep_two_config_groups(sweep_runner: TSweepRunner, overrides: List[str]) ->
     sweep = sweep_runner(
         calling_file=None,
         calling_module="hydra.test_utils.a_module",
-        config_path="configs/compose.yaml",
+        task_function=None,
+        config_path="configs",
+        config_name="compose",
         overrides=overrides,
     )
     expected_overrides = [["group1=file1"], ["group1=file2"]]
@@ -256,36 +319,32 @@ def sweep_two_config_groups(sweep_runner: TSweepRunner, overrides: List[str]) ->
             verify_dir_outputs(job_ret, job_ret.overrides)
 
 
+@pytest.mark.usefixtures("restore_singletons")
 class IntegrationTestSuite:
-    @staticmethod
-    def verify_plugin(plugin_module: Optional[str]) -> None:
-        if plugin_module is not None:
-            try:
-                importlib.import_module(plugin_module)
-            except ImportError:
-                pytest.skip("Plugin {} not installed".format(plugin_module))
-
     @pytest.mark.parametrize(  # type: ignore
         "task_config, overrides, filename, expected_name",
         [
-            (None, [], "no_config.py", "no_config"),
-            (
+            pytest.param(None, [], "no_config.py", "no_config", id="no_config"),
+            pytest.param(
                 None,
                 ["hydra.job.name=overridden_name"],
                 "no_config.py",
                 "overridden_name",
+                id="different_filename",
             ),
-            (
+            pytest.param(
                 {"hydra": {"job": {"name": "name_from_config_file"}}},
                 [],
                 "with_config.py",
                 "name_from_config_file",
+                id="different_filename_and_config_file_name_override",
             ),
-            (
-                {"hydra": {"name": "name_from_config_file"}},
+            pytest.param(
+                {"hydra": {"job": {"name": "name_from_config_file"}}},
                 ["hydra.job.name=overridden_name"],
                 "with_config.py",
                 "overridden_name",
+                id="different_filename_and_config_file_name_override_and_command_line_override",
             ),
         ],
     )
@@ -298,9 +357,7 @@ class IntegrationTestSuite:
         expected_name: str,
         task_launcher_cfg: DictConfig,
         extra_flags: List[str],
-        plugin_module: Optional[str],
     ) -> None:
-        # self.verify_plugin(plugin_module)
         overrides = extra_flags + overrides
         task_launcher_cfg = OmegaConf.create(task_launcher_cfg or {})  # type: ignore
         task_config = OmegaConf.create(task_config or {})  # type: ignore
@@ -310,7 +367,7 @@ class IntegrationTestSuite:
             tmpdir=tmpdir,
             task_config=cfg,
             overrides=overrides,
-            prints="HydraConfig.instance().hydra.job.name",
+            prints="HydraConfig.get().job.name",
             expected_outputs=expected_name,
             filename=filename,
         )
@@ -318,7 +375,7 @@ class IntegrationTestSuite:
     @pytest.mark.parametrize(  # type: ignore
         "task_config, overrides, expected_dir",
         [
-            (
+            pytest.param(
                 {
                     "hydra": {
                         "sweep": {
@@ -329,16 +386,18 @@ class IntegrationTestSuite:
                 },
                 [],
                 "task_cfg/task_cfg_0",
+                id="sweep_dir_config_override",
             ),
-            (
+            pytest.param(
                 {},
                 [
                     "hydra.sweep.dir=cli_dir",
                     "hydra.sweep.subdir=cli_dir_${hydra.job.num}",
                 ],
                 "cli_dir/cli_dir_0",
+                id="sweep_dir_cli_override",
             ),
-            (
+            pytest.param(
                 {
                     "hydra": {
                         "sweep": {
@@ -352,8 +411,9 @@ class IntegrationTestSuite:
                     "hydra.sweep.subdir=cli_dir_${hydra.job.num}",
                 ],
                 "cli_dir/cli_dir_0",
+                id="sweep_dir_cli_overridding_config",
             ),
-            (
+            pytest.param(
                 {
                     "hydra": {
                         "sweep": {
@@ -366,8 +426,9 @@ class IntegrationTestSuite:
                 },
                 ["a=1", "b=2"],
                 "hydra_cfg/a=1,b=2",
+                id="subdir:override_dirname",
             ),
-            (
+            pytest.param(
                 # Test override_dirname integration
                 {
                     "hydra": {
@@ -391,6 +452,7 @@ class IntegrationTestSuite:
                 },
                 ["a=1", "b=2", "seed=10"],
                 "hydra_cfg/a_1+b_2",
+                id="subdir:custom_override_dirname",
             ),
         ],
     )
@@ -402,9 +464,7 @@ class IntegrationTestSuite:
         expected_dir: str,
         task_launcher_cfg: DictConfig,
         extra_flags: List[str],
-        plugin_module: str,
     ) -> None:
-        # self.verify_plugin(plugin_module)
         overrides = extra_flags + overrides
         task_launcher_cfg = OmegaConf.create(task_launcher_cfg or {})  # type: ignore
         task_config = OmegaConf.create(task_config or {})  # type: ignore
@@ -419,13 +479,8 @@ class IntegrationTestSuite:
         )
 
     def test_get_orig_dir_multirun(
-        self,
-        tmpdir: Path,
-        task_launcher_cfg: DictConfig,
-        extra_flags: List[str],
-        plugin_module: str,
+        self, tmpdir: Path, task_launcher_cfg: DictConfig, extra_flags: List[str]
     ) -> None:
-        # self.verify_plugin(plugin_module)
         overrides = extra_flags
         task_launcher_cfg = OmegaConf.create(task_launcher_cfg or {})  # type: ignore
         task_config = OmegaConf.create()
@@ -437,4 +492,33 @@ class IntegrationTestSuite:
             overrides=overrides,
             prints="hydra.utils.get_original_cwd()",
             expected_outputs=str(tmpdir),
+        )
+
+    def test_to_absolute_path_multirun(
+        self, tmpdir: Path, task_launcher_cfg: DictConfig, extra_flags: List[str],
+    ) -> None:
+        expected_dir = "cli_dir/cli_dir_0"
+        overrides = extra_flags + [
+            "hydra.sweep.dir=cli_dir",
+            "hydra.sweep.subdir=cli_dir_${hydra.job.num}",
+        ]
+        task_launcher_cfg = OmegaConf.create(task_launcher_cfg or {})  # type: ignore
+        task_config = OmegaConf.create()
+        cfg = OmegaConf.merge(task_launcher_cfg, task_config)
+        assert isinstance(cfg, DictConfig)
+        path = str(Path("/foo/bar").absolute())
+        integration_test(
+            tmpdir=tmpdir,
+            task_config=cfg,
+            overrides=overrides,
+            prints="hydra.utils.to_absolute_path('/foo/bar')",
+            expected_outputs=path,
+        )
+        outputs = [str(tmpdir / "foo/bar"), str(tmpdir / expected_dir)]
+        integration_test(
+            tmpdir=tmpdir,
+            task_config=cfg,
+            overrides=overrides,
+            prints=["hydra.utils.to_absolute_path('foo/bar')", "os.getcwd()"],
+            expected_outputs=outputs,
         )

@@ -4,12 +4,13 @@ import logging
 import os
 import re
 import sys
+from dataclasses import dataclass
 from os.path import basename, dirname, splitext
 from pathlib import Path
 from time import localtime, strftime
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, OmegaConf, open_dict
 
 from hydra.core.hydra_config import HydraConfig
 from hydra.core.singleton import Singleton
@@ -104,20 +105,21 @@ def run_job(
     job_subdir_key: Optional[str],
 ) -> "JobReturn":
     old_cwd = os.getcwd()
-    working_dir = str(config.select(job_dir_key))
+    working_dir = str(OmegaConf.select(config, job_dir_key))
     if job_subdir_key is not None:
         # evaluate job_subdir_key lazily.
         # this is running on the client side in sweep and contains things such as job:id which
         # are only available there.
-        subdir = str(config.select(job_subdir_key))
+        subdir = str(OmegaConf.select(config, job_subdir_key))
         working_dir = os.path.join(working_dir, subdir)
     try:
         ret = JobReturn()
         ret.working_dir = working_dir
         task_cfg = copy.deepcopy(config)
-        del task_cfg["hydra"]
+        with open_dict(task_cfg):
+            del task_cfg["hydra"]
         ret.cfg = task_cfg
-        ret.hydra_cfg = OmegaConf.create({"hydra": HydraConfig.instance().hydra})
+        ret.hydra_cfg = OmegaConf.create({"hydra": HydraConfig.get()})
         overrides = OmegaConf.to_container(config.hydra.overrides.task)
         assert isinstance(overrides, list)
         ret.overrides = overrides
@@ -161,14 +163,14 @@ def setup_globals() -> None:
         pass
 
 
+@dataclass
 class JobReturn:
-    def __init__(self) -> None:
-        self.overrides: Optional[Sequence[str]] = None
-        self.return_value: Any = None
-        self.cfg: Optional[DictConfig] = None
-        self.hydra_cfg: Optional[DictConfig] = None
-        self.working_dir: Optional[str] = None
-        self.task_name: Optional[str] = None
+    overrides: Optional[Sequence[str]] = None
+    return_value: Any = None
+    cfg: Optional[DictConfig] = None
+    hydra_cfg: Optional[DictConfig] = None
+    working_dir: Optional[str] = None
+    task_name: Optional[str] = None
 
 
 class JobRuntime(metaclass=Singleton):
@@ -177,7 +179,7 @@ class JobRuntime(metaclass=Singleton):
         self.set("name", "UNKNOWN_NAME")
 
     def get(self, key: str) -> Any:
-        ret = self.conf.select(key)
+        ret = OmegaConf.select(self.conf, key)
         if ret is None:
             raise KeyError("Key not found in {}: {}".format(type(self).__name__, key))
         return ret
@@ -188,10 +190,10 @@ class JobRuntime(metaclass=Singleton):
 
 
 def split_config_path(
-    config_path: Optional[str],
+    config_path: Optional[str], config_name: Optional[str]
 ) -> Tuple[Optional[str], Optional[str]]:
     if config_path is None or config_path == "":
-        return None, None
+        return None, config_name
     split_file = splitext(config_path)
     if split_file[1] in (".yaml", ".yml"):
         # assuming dir/config.yaml form
@@ -207,4 +209,12 @@ def split_config_path(
 
     if config_file == "":
         config_file = None
-    return config_dir, config_file
+
+    if config_file is not None:
+        if config_name is not None:
+            raise ValueError(
+                "Config name should be specified in either config_path or config_name, but not both"
+            )
+        config_name = config_file
+
+    return config_dir, config_name

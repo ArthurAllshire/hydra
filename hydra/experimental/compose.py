@@ -1,10 +1,10 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 from typing import List, Optional
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, open_dict
 
 from hydra._internal.hydra import Hydra
-from hydra._internal.utils import detect_calling_file_or_module
+from hydra._internal.utils import detect_calling_file_or_module_from_stack_frame
 from hydra.core.global_hydra import GlobalHydra
 
 
@@ -19,19 +19,21 @@ def initialize(
     :param caller_stack_depth:
     :return:
     """
-    calling_file, calling_module = detect_calling_file_or_module(caller_stack_depth + 1)
+    calling_file, calling_module = detect_calling_file_or_module_from_stack_frame(
+        caller_stack_depth + 1
+    )
     Hydra.create_main_hydra_file_or_module(
         calling_file, calling_module, config_dir, strict
     )
 
 
 def compose(
-    config_file: Optional[str] = None,
+    config_name: Optional[str] = None,
     overrides: List[str] = [],
     strict: Optional[bool] = None,
 ) -> DictConfig:
     """
-    :param config_file: optional config file to load
+    :param config_name: optional config name to load
     :param overrides: list of overrides for config file
     :param strict: optionally override the default strict mode
     :return: the composed config
@@ -43,10 +45,11 @@ def compose(
     gh = GlobalHydra.instance()
     assert gh.hydra is not None
     cfg = gh.hydra.compose_config(
-        config_file=config_file, overrides=overrides, strict=strict
+        config_name=config_name, overrides=overrides, strict=strict
     )
     assert isinstance(cfg, DictConfig)
 
     if "hydra" in cfg:
-        del cfg["hydra"]
+        with open_dict(cfg):
+            del cfg["hydra"]
     return cfg

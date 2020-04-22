@@ -5,10 +5,11 @@ import os
 import string
 from argparse import ArgumentParser
 from collections import defaultdict
-from typing import Any, Callable, DefaultDict, List, Optional, Sequence, Tuple, Type
+from typing import Any, Callable, DefaultDict, List, Optional, Sequence, Type
 
 from omegaconf import DictConfig, OmegaConf, open_dict
 
+from hydra._internal.utils import get_column_widths
 from hydra.core.config_loader import ConfigLoader
 from hydra.core.config_search_path import ConfigSearchPath
 from hydra.core.hydra_config import HydraConfig
@@ -22,6 +23,7 @@ from hydra.core.utils import (
 )
 from hydra.errors import MissingConfigException
 from hydra.plugins.completion_plugin import CompletionPlugin
+from hydra.plugins.config_source import ConfigSource
 from hydra.plugins.launcher import Launcher
 from hydra.plugins.search_path_plugin import SearchPathPlugin
 from hydra.plugins.sweeper import Sweeper
@@ -55,6 +57,7 @@ class Hydra:
         config_search_path: ConfigSearchPath,
         strict: Optional[bool],
     ) -> "Hydra":
+
         config_loader: ConfigLoader = ConfigLoaderImpl(
             config_search_path=config_search_path, default_strict=strict
         )
@@ -79,19 +82,19 @@ class Hydra:
                 if not source.exists(""):
                     raise MissingConfigException(
                         missing_cfg_file=source.path,
-                        message="Primary config dir not found: {}".format(source.path),
+                        message=f"Primary config dir not found: {source}",
                     )
 
         JobRuntime().set("name", task_name)
 
     def run(
         self,
-        config_file: Optional[str],
+        config_name: Optional[str],
         task_function: TaskFunction,
         overrides: List[str],
     ) -> JobReturn:
         cfg = self.compose_config(
-            config_file=config_file, overrides=overrides, with_log_configuration=True
+            config_name=config_name, overrides=overrides, with_log_configuration=True
         )
         HydraConfig.instance().set_config(cfg)
         return run_job(
@@ -103,19 +106,19 @@ class Hydra:
 
     def multirun(
         self,
-        config_file: Optional[str],
+        config_name: Optional[str],
         task_function: TaskFunction,
         overrides: List[str],
     ) -> Any:
         # Initial config is loaded without strict (individual job configs may have strict).
         cfg = self.compose_config(
-            config_file=config_file,
+            config_name=config_name,
             overrides=overrides,
             strict=False,
             with_log_configuration=True,
         )
         HydraConfig.instance().set_config(cfg)
-        sweeper = Plugins.instantiate_sweeper(
+        sweeper = Plugins.instance().instantiate_sweeper(
             config=cfg, config_loader=self.config_loader, task_function=task_function
         )
         task_overrides = cfg.hydra.overrides.task
@@ -124,22 +127,25 @@ class Hydra:
     @staticmethod
     def get_sanitized_hydra_cfg(src_cfg: DictConfig) -> DictConfig:
         cfg = copy.deepcopy(src_cfg)
-        for key in list(cfg.keys()):
-            if key != "hydra":
-                del cfg[key]
-        del cfg.hydra["hydra_help"]
-        del cfg.hydra["help"]
+        with open_dict(cfg):
+            for key in list(cfg.keys()):
+                if key != "hydra":
+                    del cfg[key]
+        with open_dict(cfg.hydra):
+            del cfg.hydra["hydra_help"]
+            del cfg.hydra["help"]
         return cfg
 
     def show_cfg(
-        self, config_file: Optional[str], overrides: List[str], cfg_type: str
+        self, config_name: Optional[str], overrides: List[str], cfg_type: str
     ) -> None:
         assert cfg_type in ["job", "hydra", "all"]
         cfg = self.compose_config(
-            config_file=config_file, overrides=overrides, with_log_configuration=True
+            config_name=config_name, overrides=overrides, with_log_configuration=True
         )
         if cfg_type == "job":
-            del cfg["hydra"]
+            with open_dict(cfg):
+                del cfg["hydra"]
         elif cfg_type == "hydra":
             cfg = self.get_sanitized_hydra_cfg(cfg)
         print(cfg.pretty())
@@ -149,7 +155,7 @@ class Hydra:
         config_loader: ConfigLoader,
     ) -> DefaultDict[str, List[CompletionPlugin]]:
         shell_to_plugin: DefaultDict[str, List[CompletionPlugin]] = defaultdict(list)
-        for clazz in Plugins.discover(CompletionPlugin):
+        for clazz in Plugins.instance().discover(CompletionPlugin):
             assert issubclass(clazz, CompletionPlugin)
             plugin = clazz(config_loader)
             shell_to_plugin[plugin.provides()].append(plugin)
@@ -165,7 +171,7 @@ class Hydra:
         return shell_to_plugin
 
     def shell_completion(
-        self, config_file: Optional[str], overrides: List[str]
+        self, config_name: Optional[str], overrides: List[str]
     ) -> None:
         subcommands = ["install", "uninstall", "query"]
         arguments = OmegaConf.from_dotlist(overrides)
@@ -194,7 +200,7 @@ class Hydra:
             plugin.uninstall()
         elif arguments.query is not None:
             plugin = find_plugin(arguments.query)
-            plugin.query(config_file=config_file)
+            plugin.query(config_name=config_name)
 
     @staticmethod
     def format_args_help(args_parser: ArgumentParser) -> str:
@@ -259,10 +265,10 @@ class Hydra:
         return help_text
 
     def hydra_help(
-        self, config_file: Optional[str], args_parser: ArgumentParser, args: Any
+        self, config_name: Optional[str], args_parser: ArgumentParser, args: Any
     ) -> None:
         cfg = self.compose_config(
-            config_file=config_file,
+            config_name=config_name,
             overrides=args.overrides,
             with_log_configuration=True,
         )
@@ -272,10 +278,10 @@ class Hydra:
         print(help_text)
 
     def app_help(
-        self, config_file: Optional[str], args_parser: ArgumentParser, args: Any
+        self, config_name: Optional[str], args_parser: ArgumentParser, args: Any
     ) -> None:
         cfg = self.compose_config(
-            config_file=config_file,
+            config_name=config_name,
             overrides=args.overrides,
             with_log_configuration=True,
         )
@@ -294,34 +300,38 @@ class Hydra:
     def _print_plugins(self) -> None:
         assert log is not None
         self._log_header(header="Installed Hydra Plugins", filler="*")
-        for plugin_type in [SearchPathPlugin, Sweeper, Launcher]:
-            Hydra._log_header(
-                header="{}:".format(plugin_type.__name__), prefix="\t", filler="-"
-            )
-            for plugin in Plugins.discover(plugin_type):
-                log.debug("\t\t{}".format(plugin.__name__))
+        all_plugins = {p.__name__ for p in Plugins.instance().discover()}
+        for plugin_type in [
+            ConfigSource,
+            CompletionPlugin,
+            Launcher,
+            Sweeper,
+            SearchPathPlugin,
+        ]:
+            # Mypy false positive?
+            plugins = Plugins.instance().discover(plugin_type)  # type: ignore
+            if len(plugins) > 0:
+                Hydra._log_header(header=f"{plugin_type.__name__}:", prefix="\t")
+                for plugin in plugins:
+                    log.debug("\t\t{}".format(plugin.__name__))
+                    all_plugins.remove(plugin.__name__)
 
-    def _get_padding(self,) -> Tuple[int, int, int]:
-        provider_pad = 0
-        search_path_pad = 0
-        file_pad = 0
-        for sp in self.config_loader.get_sources():
-            provider_pad = max(provider_pad, len(sp.provider))
-            search_path_pad = max(search_path_pad, len(sp.full_path()))
-        for trace in self.config_loader.get_load_history():
-            file_pad = max(file_pad, len(trace.filename))
-
-        provider_pad += 1
-        search_path_pad += 1
-        file_pad += 1
-        return provider_pad, search_path_pad, file_pad
+        if len(all_plugins) > 0:
+            Hydra._log_header(header="Generic plugins: ", prefix="\t")
+            for plugin_name in all_plugins:
+                log.debug("\t\t{}".format(plugin_name))
 
     def _print_search_path(self) -> None:
         assert log is not None
         log.debug("")
-        self._log_header(header="Hydra config search path", filler="*")
+        self._log_header(header="Config search path", filler="*")
 
-        provider_pad, search_path_pad, file_pad = self._get_padding()
+        box: List[List[str]] = [["Provider", "Search path"]]
+
+        for sp in self.config_loader.get_sources():
+            box.append([sp.provider, sp.full_path()])
+
+        provider_pad, search_path_pad = get_column_widths(box)
         self._log_header(
             "| {} | {} |".format(
                 "Provider".ljust(provider_pad), "Search path".ljust(search_path_pad)
@@ -340,47 +350,97 @@ class Hydra:
     def _print_composition_trace(self) -> None:
         # Print configurations used to compose the config object
         assert log is not None
-        provider_pad, search_path_pad, file_pad = self._get_padding()
         log.debug("")
         self._log_header("Composition trace", filler="*")
+        box: List[List[str]] = [
+            ["Config name", "Search path", "Provider", "Schema provider"]
+        ]
+        for trace in self.config_loader.get_load_history():
+            box.append(
+                [
+                    trace.filename,
+                    trace.path if trace.path is not None else "",
+                    trace.provider if trace.provider is not None else "",
+                    trace.schema_provider if trace.schema_provider is not None else "",
+                ]
+            )
+        padding = get_column_widths(box)
+        del box[0]
+
         self._log_header(
-            "| {} | {} | {} |".format(
-                "Provider".ljust(provider_pad),
-                "Search path".ljust(search_path_pad),
-                "File".ljust(file_pad),
+            "| {} | {} | {} | {} |".format(
+                "Config name".ljust(padding[0]),
+                "Search path".ljust(padding[1]),
+                "Provider".ljust(padding[2]),
+                "Schema provider".ljust(padding[3]),
             ),
             filler="-",
         )
 
-        for trace in self.config_loader.get_load_history():
-            if trace.path is not None:
-                assert trace.provider is not None
-                assert trace.filename is not None
-                log.debug(
-                    "| {} | {} | {} |".format(
-                        trace.provider.ljust(provider_pad),
-                        trace.path.ljust(search_path_pad),
-                        trace.filename.ljust(file_pad),
-                    )
+        for row in box:
+            log.debug(
+                "| {} | {} | {} | {} |".format(
+                    row[0].ljust(padding[0]),
+                    row[1].ljust(padding[1]),
+                    row[2].ljust(padding[2]),
+                    row[3].ljust(padding[3]),
                 )
-            else:
-                log.debug("{} : NOT FOUND".format(trace.filename))
+            )
+
+    def _print_plugins_profiling_info(self, top_n: int) -> None:
+        assert log is not None
+        stats = Plugins.instance().get_stats()
+        if stats is None:
+            return
+
+        items = list(stats.modules_import_time.items())
+        # hide anything that took less than 5ms
+        filtered = filter(lambda x: x[1] > 0.0005, items)
+        sorted_items = sorted(filtered, key=lambda x: x[1], reverse=True)
+
+        top_n = max(len(sorted_items), top_n)
+        box: List[List[str]] = [["Module", "Sec"]]
+
+        for item in sorted_items[0:top_n]:
+            box.append([item[0], f"{item[1]:.3f}"])
+        padding = get_column_widths(box)
+
+        log.debug("")
+        self._log_header(header="Profiling information", filler="*")
+        self._log_header(
+            header=f"Total plugins scan time : {stats.total_time:.3f} seconds",
+            filler="-",
+        )
+
+        self._log_header(
+            f"| {box[0][0].ljust(padding[0])} | {box[0][1].ljust(padding[1])} |",
+            filler="-",
+        )
+        del box[0]
+
+        for row in box:
+            a = row[0].ljust(padding[0])
+            b = row[1].ljust(padding[1])
+            log.debug(f"| {a} | {b} |")
 
     def _print_debug_info(self) -> None:
-        self._print_plugins()
-        self._print_search_path()
-        self._print_composition_trace()
+        assert log is not None
+        if log.isEnabledFor(logging.DEBUG):
+            self._print_plugins()
+            self._print_search_path()
+            self._print_composition_trace()
+            self._print_plugins_profiling_info(10)
 
     def compose_config(
         self,
-        config_file: Optional[str],
+        config_name: Optional[str],
         overrides: List[str],
         strict: Optional[bool] = None,
         with_log_configuration: bool = False,
     ) -> DictConfig:
         """
         :param self:
-        :param config_file:
+        :param config_name:
         :param overrides:
         :param with_log_configuration: True to configure logging subsystem from the loaded config
         :param strict: None for default behavior (default to true for config file, false if no config file).
@@ -388,10 +448,10 @@ class Hydra:
         :return:
         """
         cfg = self.config_loader.load_configuration(
-            config_file=config_file, overrides=overrides, strict=strict
+            config_name=config_name, overrides=overrides, strict=strict
         )
         with open_dict(cfg):
-            from .. import __version__
+            from hydra import __version__
 
             cfg.hydra.runtime.version = __version__
             cfg.hydra.runtime.cwd = os.getcwd()

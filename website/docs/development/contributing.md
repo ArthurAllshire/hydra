@@ -26,7 +26,7 @@ conda activate hydra38
 ```
 From the source tree, install Hydra in development mode with the following command:
 ```
-pip install -e ".[dev]" -e .
+pip install -r requirements/dev.txt -e .
 ```
 ## Nox
 Hydra is using a test automation tool called [nox](https://github.com/theacodes/nox) to manage tests, linting, code coverage etc.
@@ -40,13 +40,21 @@ The code need to pass verification by the following tools:
  - `isort .` : Ensure imports are sorted properly
  - `mypy --strict .` : Ensures code passes strict type checking
 
-The easiest way to run all the required verifications is with `nox -s lint`.
+The easiest way to run the required verifications is: 
+ - `nox -s lint` : for the Hydra core
+ - `nox -s lint_plugins` : for the included plugins
 
-It is also recommended that you install pre-commit hooks (use `pre-commit install`), this will ensure that those tests
-are ran just before you commit your code.
+isort is a bit tricky to run for plugins. the best way to get it to sort the plugins imports is with the FIX environment
+variable:
+```
+$ FIX=1 nox -s lint_plugins
+```
 
-Any pull request that does not pass the linting will fail the automated testing.
+It is also recommended that you install pre-commit hooks (use `pre-commit install`).
+pre-commit will execute some of the above tets when you commit your code locally. 
+You can disable it by appending `-n` to your commit command: `git commit -am wip -n`
 
+Pull requests that does not lint will fail the automated testing.
 
 ## Testing
 ### With pytest
@@ -74,7 +82,7 @@ PR ends up rejected due to code quality reasons).
 
 Once you have an issue or pull request, you take the number and you create a
 file inside of the ``news/`` directory named after that issue number with one of the following extensions:
-* `api_change` : API Change (May require changes from downstream projects or plugins)
+* `api_change` : API Change (Renames, deprecations and removals)
 * `feature` : Addition of a new feature
 * `bugfix` : Fixing of a bug
 * `docs` : Addition or updates to documentation
@@ -85,7 +93,7 @@ If your issue or PR number is ``1234`` and this change is fixing a bug, then you
 create a file ``news/1234.bugfix``. PRs can span multiple categories by creating
 multiple files (for instance, if you added a feature and deprecated/removed the
 old feature at the same time, you would create ``news/NNNN.feature`` and
-``news/NNNN.removal``). Likewise if a PR touches multiple issues/PRs you may
+``news/NNNN.api_change``). Likewise if a PR touches multiple issues/PRs you may
 create a file for each of them with the exact same contents and Towncrier will
 deduplicate them.
 

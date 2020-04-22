@@ -3,8 +3,6 @@ import logging
 from pathlib import Path
 from typing import Optional, Sequence
 
-from omegaconf import DictConfig, open_dict
-
 from hydra.core.config_loader import ConfigLoader
 from hydra.core.config_search_path import ConfigSearchPath
 from hydra.core.hydra_config import HydraConfig
@@ -18,6 +16,14 @@ from hydra.core.utils import (
 from hydra.plugins.launcher import Launcher
 from hydra.plugins.search_path_plugin import SearchPathPlugin
 from hydra.types import TaskFunction
+from omegaconf import DictConfig, open_dict
+
+# IMPORTANT:
+# If your plugin imports any module that takes more than a fraction of a second to import,
+# Import the module lazily (typically inside launch()).
+# Installed plugins are imported during Hydra initialization and plugins that are slow to import plugins will slow
+# the startup of ALL hydra applications.
+
 
 log = logging.getLogger(__name__)
 
@@ -55,9 +61,12 @@ class ExampleLauncher(Launcher):
         self.config_loader = config_loader
         self.task_function = task_function
 
-    def launch(self, job_overrides: Sequence[Sequence[str]]) -> Sequence[JobReturn]:
+    def launch(
+        self, job_overrides: Sequence[Sequence[str]], initial_job_idx: int
+    ) -> Sequence[JobReturn]:
         """
         :param job_overrides: a List of List<String>, where each inner list is the arguments for one job run.
+        :param initial_job_idx: Initial job idx in batch.
         :return: an array of return values from run_job with indexes corresponding to the input list indexes.
         """
         setup_globals()
@@ -77,6 +86,7 @@ class ExampleLauncher(Launcher):
         runs = []
 
         for idx, overrides in enumerate(job_overrides):
+            idx = initial_job_idx + idx
             log.info("\t#{} : {}".format(idx, " ".join(filter_overrides(overrides))))
             sweep_config = self.config_loader.load_sweep_config(
                 self.config, list(overrides)

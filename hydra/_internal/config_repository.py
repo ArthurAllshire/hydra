@@ -20,13 +20,19 @@ class ConfigRepository:
             assert search_path.provider is not None
             scheme = self._get_scheme(search_path.path)
             source_type = SourcesRegistry.instance().resolve(scheme)
-            self.sources.append(source_type(search_path.provider, search_path.path))
+            source = source_type(search_path.provider, search_path.path)
+            self.sources.append(source)
 
     def load_config(self, config_path: str) -> Optional[ConfigResult]:
         source = self._find_config(config_path=config_path)
         ret = None
         if source is not None:
             ret = source.load_config(config_path=config_path)
+            # if this source is THE schema source, flag the result as coming from it.
+            ret.is_schema_source = (
+                source.__class__.__name__ == "StructuredConfigSource"
+                and source.provider == "schema"
+            )
         return ret
 
     def exists(self, config_path: str) -> bool:
@@ -37,8 +43,7 @@ class ConfigRepository:
     ) -> List[str]:
         options: List[str] = []
         for source in self.sources:
-            object_type = source.get_type(config_path=group_name)
-            if object_type == ObjectType.GROUP:
+            if source.is_group(config_path=group_name):
                 options.extend(
                     source.list(config_path=group_name, results_filter=results_filter)
                 )

@@ -14,13 +14,18 @@ jobs:
             bash ./Miniconda3-latest-MacOSX-x86_64.sh -b
             ~/miniconda3/bin/conda init bash
       - run:
+          name: "Preparing Conda environment"
+          command: |
+            conda create -n hydra python=3.6 -yq
+            conda run -n hydra pip install nox
+      - run:
           name: "Testing Hydra"
-          no_output_timeout: 30m
+          no_output_timeout: 10m
           command: |
             export NOX_PYTHON_VERSIONS=3.6
-            ~/miniconda3/bin/conda create -n hydra python=3.6 -q -y
-            ~/miniconda3/bin/conda run -n hydra pip install nox
-            ~/miniconda3/bin/conda run -n hydra python3 -m nox
+            conda activate hydra
+            pip install nox
+            nox
 
   py37_mac:
     macos:
@@ -34,13 +39,18 @@ jobs:
             bash ./Miniconda3-latest-MacOSX-x86_64.sh -b
             ~/miniconda3/bin/conda init bash
       - run:
+          name: "Preparing Conda environment"
+          command: |
+            conda create -n hydra python=3.7 -yq
+            conda run -n hydra pip install nox
+      - run:
           name: "Testing Hydra"
-          no_output_timeout: 30m
+          no_output_timeout: 10m
           command: |
             export NOX_PYTHON_VERSIONS=3.7
-            ~/miniconda3/bin/conda create -n hydra python=3.7 -q -y
-            ~/miniconda3/bin/conda run -n hydra pip install nox
-            ~/miniconda3/bin/conda run -n hydra python3 -m nox
+            conda activate hydra
+            pip install nox
+            nox
 
   py38_mac:
     macos:
@@ -54,14 +64,18 @@ jobs:
             bash ./Miniconda3-latest-MacOSX-x86_64.sh -b
             ~/miniconda3/bin/conda init bash
       - run:
+          name: "Preparing Conda environment"
+          command: |
+            conda create -n hydra python=3.8 -yq
+            conda run -n hydra pip install nox
+      - run:
           name: "Testing Hydra"
-          no_output_timeout: 30m
+          no_output_timeout: 10m
           command: |
             export NOX_PYTHON_VERSIONS=3.8
-            ~/miniconda3/bin/conda create -n hydra python=3.8 -q -y
-            ~/miniconda3/bin/conda run -n hydra pip install nox
-            ~/miniconda3/bin/conda run -n hydra python3 -m nox
-
+            conda activate hydra
+            pip install nox
+            nox
 
   # Linux
   py36_linux:
@@ -69,36 +83,51 @@ jobs:
       - image: circleci/python:3.6
     steps:
       - checkout
-      - run: sudo apt-get install -y expect
-      - run: echo 'export NOX_PYTHON_VERSIONS=3.6' >> $BASH_ENV
-      - run: sudo pip install nox
+      - run:
+          name: "Preparing environment"
+          command: |
+            sudo apt-get install -y expect
+            sudo pip install nox
       - run:
           name: "Testing Hydra"
-          command: nox
+          command: |
+              export NOX_PYTHON_VERSIONS=3.6
+              pip install nox
+              nox
 
   py37_linux:
     docker:
       - image: circleci/python:3.7
     steps:
       - checkout
-      - run: sudo apt-get install -y expect
-      - run: echo 'export NOX_PYTHON_VERSIONS=3.7' >> $BASH_ENV
-      - run: sudo pip install nox
+      - run:
+          name: "Preparing environment"
+          command: |
+            sudo apt-get install -y expect
+            sudo pip install nox
       - run:
           name: "Testing Hydra"
-          command: nox
+          command: |
+              export NOX_PYTHON_VERSIONS=3.7
+              pip install nox
+              nox
 
   py38_linux:
     docker:
       - image: circleci/python:3.8
     steps:
       - checkout
-      - run: sudo apt-get install -y expect
-      - run: echo 'export NOX_PYTHON_VERSIONS=3.8' >> $BASH_ENV
-      - run: sudo pip install nox
+      - run:
+          name: "Preparing environment"
+          command: |
+            sudo apt-get install -y expect
+            sudo pip install nox
       - run:
           name: "Testing Hydra"
-          command: nox
+          command: |
+              export NOX_PYTHON_VERSIONS=3.8
+              pip install nox
+              nox
 
   # windows
   py36_win:
@@ -110,14 +139,16 @@ jobs:
           command: |
             choco install miniconda3 -y
             C:\tools\miniconda3\Scripts\conda.exe init powershell
+            choco install openssl -y
       - run:
           name: Preparing conda environment
           command: |
-            conda create -n hydra python=3.6 -q -y
-            conda run -n hydra pip install nox
+            conda create -n hydra python=3.6 -qy
+            conda activate hydra
+            pip install nox
       - run:
           name: Testing Hydra
-          no_output_timeout: 30m
+          no_output_timeout: 10m
           command: |
             $env:NOX_PYTHON_VERSIONS=3.6
             $env:PYTHONIOENCODING="utf_8"
@@ -134,14 +165,16 @@ jobs:
           command: |
             choco install miniconda3 -y
             C:\tools\miniconda3\Scripts\conda.exe init powershell
+            choco install openssl -y
       - run:
           name: Preparing conda environment
           command: |
             conda create -n hydra python=3.7 -q -y
-            conda run -n hydra pip install nox
+            conda activate hydra
+            pip install nox
       - run:
           name: Testing Hydra
-          no_output_timeout: 30m
+          no_output_timeout: 10m
           command: |
             $env:NOX_PYTHON_VERSIONS=3.7
             $env:PYTHONIOENCODING="utf_8"
@@ -149,29 +182,30 @@ jobs:
             nox
             exit $LASTEXITCODE
 
-  # TODO: Test later, for now low priority
-#  py38_win:
-#    executor: win/default
-#    steps:
-#      - checkout
-#      - run:
-#          name: Installing Conda
-#          command: |
-#            choco install miniconda3 -y
-#            C:\tools\miniconda3\Scripts\conda.exe init powershell
-#      - run:
-#          name: Preparing conda environment
-#          command: |
-#            conda create -n hydra python=3.8 -q -y
-#            conda run -n hydra pip install nox
-#      - run:
-#          name: Testing Hydra
-#          command: |
-#            $env:NOX_PYTHON_VERSIONS=3.8
-#            $env:PYTHONIOENCODING="utf_8"
-#            conda activate hydra
-#            nox
-#            exit $LASTEXITCODE
+  py38_win:
+    executor: win/default
+    steps:
+      - checkout
+      - run:
+          name: Installing Conda
+          command: |
+            choco install miniconda3 -y
+            C:\tools\miniconda3\Scripts\conda.exe init powershell
+            choco install openssl -y
+      - run:
+          name: Preparing conda environment
+          command: |
+            conda create -n hydra python=3.8 -q -y
+            conda activate hydra
+            pip install nox
+      - run:
+          name: Testing Hydra
+          command: |
+            $env:NOX_PYTHON_VERSIONS=3.8
+            $env:PYTHONIOENCODING="utf_8"
+            conda activate hydra
+            nox
+            exit $LASTEXITCODE
   # Misc
   coverage:
     docker:
@@ -191,7 +225,10 @@ jobs:
           command: |
             SUBDIR=website
             REV=$(git log -5 --pretty=oneline origin/gh-pages | grep "Deploy website" |  awk 'NF>1{print $NF}'  | head -1)
-            if [[ $(git diff-index $REV -- $SUBDIR) ]]; then
+            # This condition passes in 2 conditions:
+            # 1. The revision does not exist (squash/force push happened)
+            # 2. There are changes between last deployed revision and HEAD
+            if [[ ! $(git rev-parse --verify -q "$REV^{commit}") ||  $(git diff-index $REV -- $SUBDIR) ]]; then
               echo "Changes detected in directory $SUBDIR between origin/master and this diff"
 
               cd $SUBDIR

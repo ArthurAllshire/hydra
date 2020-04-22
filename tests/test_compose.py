@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+import re
 from typing import Any, List
 
 import pytest
@@ -7,13 +8,10 @@ from hydra._internal.config_search_path_impl import ConfigSearchPathImpl
 from hydra.core.config_search_path import SearchPathQuery
 from hydra.core.global_hydra import GlobalHydra
 from hydra.experimental import compose, initialize
-
-# noinspection PyUnresolvedReferences
-from hydra.test_utils.test_utils import (  # noqa: F401
+from hydra.test_utils.test_utils import (
     TGlobalHydraContext,
     chdir_hydra_root,
     does_not_raise,
-    hydra_global_context,
 )
 
 chdir_hydra_root()
@@ -59,7 +57,7 @@ def test_initialize_with_config_dir() -> None:
 class TestCompose:
     def test_compose_decorator(
         self,
-        hydra_global_context: TGlobalHydraContext,  # noqa: F811
+        hydra_global_context: TGlobalHydraContext,
         config_dir: str,
         config_file: str,
         overrides: List[str],
@@ -72,7 +70,7 @@ class TestCompose:
     def test_compose_config(
         self,
         config_dir: str,
-        hydra_global_context: TGlobalHydraContext,  # noqa: F811
+        hydra_global_context: TGlobalHydraContext,
         config_file: str,
         overrides: List[str],
         expected: Any,
@@ -84,7 +82,7 @@ class TestCompose:
     def test_strict_failure_global_strict(
         self,
         config_dir: str,
-        hydra_global_context: TGlobalHydraContext,  # noqa: F811
+        hydra_global_context: TGlobalHydraContext,
         config_file: str,
         overrides: List[str],
         expected: Any,
@@ -98,7 +96,7 @@ class TestCompose:
     def test_strict_failure_call_is_strict(
         self,
         config_dir: str,
-        hydra_global_context: TGlobalHydraContext,  # noqa: F811
+        hydra_global_context: TGlobalHydraContext,
         config_file: str,
         overrides: List[str],
         expected: Any,
@@ -106,18 +104,18 @@ class TestCompose:
         # default strict false, but call is strict
         with hydra_global_context(config_dir=config_dir, strict=False):
             with pytest.raises(AttributeError):
-                compose(config_file=config_file, overrides=overrides, strict=True)
+                compose(config_name=config_file, overrides=overrides, strict=True)
 
         # default strict true, but call is false
         with hydra_global_context(config_dir=config_dir, strict=True):
 
             with does_not_raise():
-                compose(config_file=config_file, overrides=overrides, strict=False)
+                compose(config_name=config_file, overrides=overrides, strict=False)
 
     def test_strict_failure_disabled_on_call(
         self,
         config_dir: str,
-        hydra_global_context: TGlobalHydraContext,  # noqa: F811
+        hydra_global_context: TGlobalHydraContext,
         config_file: str,
         overrides: List[str],
         expected: Any,
@@ -125,7 +123,7 @@ class TestCompose:
         # default strict true, but call is false
         with hydra_global_context(config_dir=config_dir, strict=True):
             with does_not_raise():
-                compose(config_file=config_file, overrides=overrides, strict=False)
+                compose(config_name=config_file, overrides=overrides, strict=False)
 
 
 @pytest.mark.parametrize(
@@ -203,7 +201,7 @@ class TestComposeCloudInfraExample:
     def test_compose(
         self,
         config_dir: str,
-        hydra_global_context: TGlobalHydraContext,  # noqa: F811
+        hydra_global_context: TGlobalHydraContext,
         config_file: str,
         overrides: List[str],
         expected: Any,
@@ -211,3 +209,17 @@ class TestComposeCloudInfraExample:
         with hydra_global_context(config_dir=config_dir):
             ret = compose(config_file, overrides)
             assert ret == expected
+
+
+def test_missing_init_py_error(hydra_global_context: TGlobalHydraContext) -> None:
+    with pytest.raises(
+        Exception,
+        match=re.escape(
+            "Unexpected error checking content of 'hydra.test_utils.configs.missing_init_py', "
+            "did you forget an __init__.py?"
+        ),
+    ):
+        with hydra_global_context(
+            config_dir="../hydra/test_utils/configs/missing_init_py"
+        ):
+            ...

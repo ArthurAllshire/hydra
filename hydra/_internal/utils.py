@@ -1,18 +1,52 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import argparse
+import copy
 import inspect
+import logging.config
 import os
 import sys
+import warnings
 from os.path import dirname, join, normpath, realpath
-from typing import Any, Optional, Sequence, Tuple
+from typing import Any, Callable, List, Optional, Sequence, Tuple, Type, Union
+
+from omegaconf import DictConfig, OmegaConf, _utils, read_write
 
 from hydra._internal.config_search_path_impl import ConfigSearchPathImpl
 from hydra.core.config_search_path import ConfigSearchPath
 from hydra.core.utils import get_valid_filename, split_config_path
-from hydra.types import TaskFunction
+from hydra.types import ObjectConf, TaskFunction
+
+log = logging.getLogger(__name__)
 
 
-def detect_calling_file_or_module(
+def _get_module_name_override() -> Optional[str]:
+    module_envs = ["HYDRA_MAIN_MODULE", "FB_PAR_MAIN_MODULE", "FB_XAR_MAIN_MODULE"]
+    for module_env in module_envs:
+        if module_env in os.environ:
+            return os.environ[module_env]
+    return None
+
+
+def detect_calling_file_or_module_from_task_function(
+    task_function: Any,
+) -> Tuple[Optional[str], Optional[str]]:
+    mdl = _get_module_name_override()
+    calling_file: Optional[str]
+    calling_module: Optional[str]
+    if mdl is not None:
+        calling_file = None
+        # short module name
+        if mdl.rfind(".") == -1:
+            mdl = f"__main__.{mdl}"
+        calling_module = mdl
+    else:
+        calling_file = task_function.__code__.co_filename
+        calling_module = None
+
+    return calling_file, calling_module
+
+
+def detect_calling_file_or_module_from_stack_frame(
     stack_depth: int,
 ) -> Tuple[Optional[str], Optional[str]]:
     calling_file = None
@@ -30,12 +64,7 @@ def detect_calling_file_or_module(
     except KeyError:
         pass
     try:
-        module_envs = ["HYDRA_MAIN_MODULE", "FB_PAR_MAIN_MODULE", "FB_XAR_MAIN_MODULE"]
-        for module_env in module_envs:
-            if module_env in os.environ:
-                calling_module = os.environ[module_env]
-                break
-
+        calling_module = _get_module_name_override()
         if calling_module is None:
             calling_module = frame[0].f_globals[frame[3]].__module__
     except KeyError:
@@ -131,17 +160,19 @@ def create_config_search_path(search_path_dir: Optional[str]) -> ConfigSearchPat
     from hydra.core.plugins import Plugins
     from hydra.plugins.search_path_plugin import SearchPathPlugin
 
-    Plugins.register_config_sources()
     search_path = ConfigSearchPathImpl()
     search_path.append("hydra", "pkg://hydra.conf")
+
     if search_path_dir is not None:
         search_path.append("main", search_path_dir)
 
-    search_path_plugins = Plugins.discover(SearchPathPlugin)
+    search_path_plugins = Plugins.instance().discover(SearchPathPlugin)
     for spp in search_path_plugins:
         plugin = spp()
         assert isinstance(plugin, SearchPathPlugin)
         plugin.manipulate_search_path(search_path)
+
+    search_path.append("schema", "structured://")
 
     return search_path
 
@@ -150,13 +181,20 @@ def run_hydra(
     args_parser: argparse.ArgumentParser,
     task_function: TaskFunction,
     config_path: Optional[str],
+    config_name: Optional[str],
     strict: Optional[bool],
 ) -> None:
+
+    from hydra.core.global_hydra import GlobalHydra
+
     from .hydra import Hydra
 
-    calling_file, calling_module = detect_calling_file_or_module(3)
-    config_dir, config_file = split_config_path(config_path)
-    strict = _strict_mode_strategy(strict, config_file)
+    calling_file, calling_module = detect_calling_file_or_module_from_task_function(
+        task_function
+    )
+
+    config_dir, config_name = split_config_path(config_path, config_name)
+    strict = _strict_mode_strategy(strict, config_name)
     task_name = detect_task_name(calling_file, calling_module)
     search_path = create_automatic_config_search_path(
         calling_file, calling_module, config_dir
@@ -165,44 +203,48 @@ def run_hydra(
     hydra = Hydra.create_main_hydra2(
         task_name=task_name, config_search_path=search_path, strict=strict
     )
+    try:
+        args = args_parser.parse_args()
+        if args.help:
+            hydra.app_help(config_name=config_name, args_parser=args_parser, args=args)
+            sys.exit(0)
+        if args.hydra_help:
+            hydra.hydra_help(
+                config_name=config_name, args_parser=args_parser, args=args
+            )
+            sys.exit(0)
 
-    args = args_parser.parse_args()
-    if args.help:
-        hydra.app_help(config_file=config_file, args_parser=args_parser, args=args)
-        sys.exit(0)
-    if args.hydra_help:
-        hydra.hydra_help(config_file=config_file, args_parser=args_parser, args=args)
-        sys.exit(0)
-
-    has_show_cfg = args.cfg is not None
-    num_commands = args.run + has_show_cfg + args.multirun + args.shell_completion
-    if num_commands > 1:
-        raise ValueError(
-            "Only one of --run, --multirun,  -cfg and --shell_completion can be specified"
-        )
-    if num_commands == 0:
-        args.run = True
-    if args.run:
-        hydra.run(
-            config_file=config_file,
-            task_function=task_function,
-            overrides=args.overrides,
-        )
-    elif args.multirun:
-        hydra.multirun(
-            config_file=config_file,
-            task_function=task_function,
-            overrides=args.overrides,
-        )
-    elif args.cfg:
-        hydra.show_cfg(
-            config_file=config_file, overrides=args.overrides, cfg_type=args.cfg
-        )
-    elif args.shell_completion:
-        hydra.shell_completion(config_file=config_file, overrides=args.overrides)
-    else:
-        print("Command not specified")
-        sys.exit(1)
+        has_show_cfg = args.cfg is not None
+        num_commands = args.run + has_show_cfg + args.multirun + args.shell_completion
+        if num_commands > 1:
+            raise ValueError(
+                "Only one of --run, --multirun,  -cfg and --shell_completion can be specified"
+            )
+        if num_commands == 0:
+            args.run = True
+        if args.run:
+            hydra.run(
+                config_name=config_name,
+                task_function=task_function,
+                overrides=args.overrides,
+            )
+        elif args.multirun:
+            hydra.multirun(
+                config_name=config_name,
+                task_function=task_function,
+                overrides=args.overrides,
+            )
+        elif args.cfg:
+            hydra.show_cfg(
+                config_name=config_name, overrides=args.overrides, cfg_type=args.cfg
+            )
+        elif args.shell_completion:
+            hydra.shell_completion(config_name=config_name, overrides=args.overrides)
+        else:
+            print("Command not specified")
+            sys.exit(1)
+    finally:
+        GlobalHydra.instance().clear()
 
 
 def _get_exec_command() -> str:
@@ -269,14 +311,137 @@ def get_args(args: Optional[Sequence[str]] = None) -> Any:
     return get_args_parser().parse_args(args=args)
 
 
-def _strict_mode_strategy(strict: Optional[bool], config_file: Optional[str]) -> bool:
+def _strict_mode_strategy(strict: Optional[bool], config_name: Optional[str]) -> bool:
     """Decide how to set strict mode.
     If a value was provided -- always use it. Otherwise decide based
-    on the existence of config_file.
+    on the existence of config_name.
     """
 
     if strict is not None:
         return strict
 
-    # strict if config_file is present
-    return config_file is not None
+    # strict if config_name is present
+    return config_name is not None
+
+
+def get_column_widths(matrix: List[List[str]]) -> List[int]:
+    num_cols = 0
+    for row in matrix:
+        num_cols = max(num_cols, len(row))
+    widths: List[int] = [0] * num_cols
+    for row in matrix:
+        for idx, col in enumerate(row):
+            widths[idx] = max(widths[idx], len(col))
+
+    return widths
+
+
+def _instantiate_class(
+    clazz: Type[Any], config: Union[ObjectConf, DictConfig], *args: Any, **kwargs: Any
+) -> Any:
+    final_kwargs = _get_kwargs(config, **kwargs)
+    return clazz(*args, **final_kwargs)
+
+
+def _call_callable(
+    fn: Callable[..., Any],
+    config: Union[ObjectConf, DictConfig],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    final_kwargs = _get_kwargs(config, **kwargs)
+    return fn(*args, **final_kwargs)
+
+
+def _locate(path: str) -> Union[type, Callable[..., Any]]:
+    """
+    Locate an object by name or dotted path, importing as necessary.
+    This is similar to the pydoc function `locate`, except that it checks for
+    the module from the given path from back to front.
+    """
+    import builtins
+    from importlib import import_module
+
+    parts = [part for part in path.split(".") if part]
+    module = None
+    for n in reversed(range(len(parts))):
+        try:
+            module = import_module(".".join(parts[:n]))
+        except Exception as e:
+            if n == 0:
+                log.error(f"Error loading module {path} : {e}")
+                raise e
+            continue
+        if module:
+            break
+    if module:
+        obj = module
+    else:
+        obj = builtins
+    for part in parts[n:]:
+        if not hasattr(obj, part):
+            raise ValueError(
+                f"Error finding attribute ({part}) in class ({obj.__name__}): {path}"
+            )
+        obj = getattr(obj, part)
+    if isinstance(obj, type):
+        obj_type: type = obj
+        return obj_type
+    elif callable(obj):
+        obj_callable: Callable[..., Any] = obj
+        return obj_callable
+    else:
+        # dummy case
+        raise ValueError(f"Invalid type ({type(obj)}) found for {path}")
+
+
+def _get_kwargs(config: Union[ObjectConf, DictConfig], **kwargs: Any) -> Any:
+    # copy config to avoid mutating it when merging with kwargs
+    config_copy = copy.deepcopy(config)
+
+    # Manually set parent as deepcopy does not currently handles it (https://github.com/omry/omegaconf/issues/130)
+    # noinspection PyProtectedMember
+    config_copy._set_parent(config._get_parent())  # type: ignore
+    config = config_copy
+
+    params = config.params if "params" in config else OmegaConf.create()
+    assert isinstance(
+        params, DictConfig
+    ), f"Input config params are expected to be a mapping, found {type(config.params).__name__}"
+    primitives = {}
+    rest = {}
+    for k, v in kwargs.items():
+        if _utils.is_primitive_type(v) or isinstance(v, (dict, list)):
+            primitives[k] = v
+        else:
+            rest[k] = v
+    final_kwargs = {}
+    with read_write(params):
+        params.merge_with(OmegaConf.create(primitives))
+
+    for k, v in params.items():
+        final_kwargs[k] = v
+
+    for k, v in rest.items():
+        final_kwargs[k] = v
+    return final_kwargs
+
+
+def _get_cls_name(config: Union[ObjectConf, DictConfig]) -> str:
+    if "class" in config:
+        warnings.warn(
+            "\n"
+            "ObjectConf field 'class' is deprecated since Hydra 1.0.0 and will be removed in a future Hydra version.\n"
+            "Offending config class:\n"
+            f"\tclass={config['class']}\n"
+            "Change your config to use 'cls' instead of 'class'.\n",
+            category=UserWarning,
+        )
+        classname = config["class"]
+        assert isinstance(classname, str)
+        return classname
+    else:
+        if "cls" in config:
+            return config.cls
+        else:
+            raise ValueError("Input config does not have a cls field")

@@ -1,3 +1,0 @@
-hydra:
-  sweeper:
-    class: hydra._internal.core_plugins.basic_sweeper.BasicSweeper

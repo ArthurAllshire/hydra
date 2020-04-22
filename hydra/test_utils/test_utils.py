@@ -12,18 +12,16 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterator, List, Optional, Union
+from typing import Any, Dict, Iterator, List, Optional, Union
 
-import pytest
 from omegaconf import DictConfig, OmegaConf
 from typing_extensions import Protocol
 
 import hydra.experimental
-from hydra._internal.config_search_path_impl import ConfigSearchPathImpl
 from hydra._internal.hydra import Hydra
 from hydra.core.global_hydra import GlobalHydra
-from hydra.core.plugins import Plugins
 from hydra.core.utils import JobReturn, split_config_path
+from hydra.types import TaskFunction
 
 # CircleCI does not have the environment variable USER, breaking the tests.
 os.environ["USER"] = "test_user"
@@ -52,24 +50,6 @@ class GlobalHydraContext:
         GlobalHydra().clear()
 
 
-@pytest.fixture(scope="function")  # type: ignore
-def hydra_global_context() -> Callable[
-    [str, Optional[str], Optional[bool]], GlobalHydraContext
-]:
-    def _(
-        task_name: str = "task",
-        config_dir: Optional[str] = None,
-        strict: Optional[bool] = False,
-    ) -> "GlobalHydraContext":
-        ctx = GlobalHydraContext()
-        ctx.task_name = task_name
-        ctx.config_dir = config_dir
-        ctx.strict = strict
-        return ctx
-
-    return _
-
-
 class TGlobalHydraContext(Protocol):
     def __call__(
         self,
@@ -96,6 +76,7 @@ class TaskTestFunction:
         self.calling_file: Optional[str] = None
         self.calling_module: Optional[str] = None
         self.config_path: Optional[str] = None
+        self.config_name: Optional[str] = None
         self.strict: Optional[bool] = None
         self.hydra: Optional[Hydra] = None
         self.job_ret: Optional[JobReturn] = None
@@ -109,7 +90,9 @@ class TaskTestFunction:
 
     def __enter__(self) -> "TaskTestFunction":
         try:
-            config_dir, config_file = split_config_path(self.config_path)
+            config_dir, config_name = split_config_path(
+                self.config_path, self.config_name
+            )
 
             self.hydra = Hydra.create_main_hydra_file_or_module(
                 calling_file=self.calling_file,
@@ -122,7 +105,7 @@ class TaskTestFunction:
             assert overrides is not None
             overrides.append("hydra.run.dir={}".format(self.temp_dir))
             self.job_ret = self.hydra.run(
-                config_file=config_file, task_function=self, overrides=overrides
+                config_name=config_name, task_function=self, overrides=overrides
             )
             return self
         finally:
@@ -135,35 +118,13 @@ class TaskTestFunction:
         shutil.rmtree(self.temp_dir)
 
 
-@pytest.fixture(scope="function")  # type: ignore
-def task_runner() -> Callable[
-    [Optional[str], Optional[str], Optional[str], Optional[List[str]], Optional[bool]],
-    TaskTestFunction,
-]:
-    def _(
-        calling_file: Optional[str],
-        calling_module: Optional[str],
-        config_path: Optional[str],
-        overrides: Optional[List[str]] = None,
-        strict: Optional[bool] = False,
-    ) -> TaskTestFunction:
-        task = TaskTestFunction()
-        task.overrides = overrides or []
-        task.calling_file = calling_file
-        task.calling_module = calling_module
-        task.config_path = config_path
-        task.strict = strict
-        return task
-
-    return _
-
-
 class TTaskRunner(Protocol):
     def __call__(
         self,
         calling_file: Optional[str],
         calling_module: Optional[str],
         config_path: Optional[str],
+        config_name: Optional[str],
         overrides: Optional[List[str]] = None,
         strict: Optional[bool] = False,
     ) -> TaskTestFunction:
@@ -185,7 +146,9 @@ class SweepTaskFunction:
         self.overrides: Optional[List[str]] = None
         self.calling_file: Optional[str] = None
         self.calling_module: Optional[str] = None
+        self.task_function: Optional[TaskFunction] = None
         self.config_path: Optional[str] = None
+        self.config_name: Optional[str] = None
         self.strict: Optional[bool] = None
         self.sweeps = None
         self.returns = None
@@ -194,6 +157,8 @@ class SweepTaskFunction:
         """
         Actual function being executed by Hydra
         """
+        if self.task_function is not None:
+            return self.task_function(cfg)
         return 100
 
     def __enter__(self) -> "SweepTaskFunction":
@@ -202,7 +167,9 @@ class SweepTaskFunction:
         assert overrides is not None
         overrides.append("hydra.sweep.dir={}".format(self.temp_dir))
         try:
-            config_dir, config_file = split_config_path(self.config_path)
+            config_dir, config_name = split_config_path(
+                self.config_path, self.config_name
+            )
             hydra_ = Hydra.create_main_hydra_file_or_module(
                 calling_file=self.calling_file,
                 calling_module=self.calling_module,
@@ -211,7 +178,7 @@ class SweepTaskFunction:
             )
 
             self.returns = hydra_.multirun(
-                config_file=config_file, task_function=self, overrides=overrides
+                config_name=config_name, task_function=self, overrides=overrides
             )
         finally:
             GlobalHydra().clear()
@@ -223,29 +190,6 @@ class SweepTaskFunction:
         shutil.rmtree(self.temp_dir)
 
 
-@pytest.fixture(scope="function")  # type: ignore
-def sweep_runner() -> Callable[
-    [Optional[str], Optional[str], Optional[str], Optional[List[str]], Optional[bool]],
-    SweepTaskFunction,
-]:
-    def _(
-        calling_file: Optional[str],
-        calling_module: Optional[str],
-        config_path: Optional[str],
-        overrides: Optional[List[str]],
-        strict: Optional[bool] = None,
-    ) -> SweepTaskFunction:
-        sweep = SweepTaskFunction()
-        sweep.calling_file = calling_file
-        sweep.calling_module = calling_module
-        sweep.config_path = config_path
-        sweep.strict = strict
-        sweep.overrides = overrides or []
-        return sweep
-
-    return _
-
-
 class TSweepRunner(Protocol):
     returns: List[List[JobReturn]]
 
@@ -253,7 +197,9 @@ class TSweepRunner(Protocol):
         self,
         calling_file: Optional[str],
         calling_module: Optional[str],
+        task_function: Optional[TaskFunction],
         config_path: Optional[str],
+        config_name: Optional[str],
         overrides: Optional[List[str]],
         strict: Optional[bool] = None,
     ) -> SweepTaskFunction:
@@ -262,12 +208,21 @@ class TSweepRunner(Protocol):
 
 def chdir_hydra_root() -> None:
     """
-    Chage the cwd to the root of the hydra project.
+    Change the cwd to the root of the hydra project.
     used from unit tests to make them runnable from anywhere in the tree.
     """
+    _chdir_to_dir_containing(target="ATTRIBUTION")
+
+
+def chdir_plugin_root() -> None:
+    """
+    Change the cwd to the root of the plugin (location of setup.py)
+    """
+    _chdir_to_dir_containing(target="setup.py")
+
+
+def _chdir_to_dir_containing(target: str, max_up: int = 4) -> None:
     cur = os.getcwd()
-    max_up = 4
-    target = "ATTRIBUTION"
     while not os.path.exists(os.path.join(cur, target)) and max_up > 0:
         cur = os.path.relpath(os.path.join(cur, ".."))
         max_up = max_up - 1
@@ -307,6 +262,7 @@ def integration_test(
     prints: Union[str, List[str]],
     expected_outputs: Union[str, List[str]],
     filename: str = "task.py",
+    env_override: Dict[str, str] = {},
 ) -> str:
     if isinstance(prints, str):
         prints = [prints]
@@ -323,7 +279,7 @@ from hydra.core.hydra_config import HydraConfig
 @hydra.main($CONFIG_PATH)
 def experiment(cfg):
     with open("$OUTPUT_FILE", "w") as f:
-        $PRINTS
+$PRINTS
 
 if __name__ == "__main__":
     experiment()
@@ -331,11 +287,13 @@ if __name__ == "__main__":
     )
 
     print_code = ""
+    print_indent = "        "
     if prints is None or len(prints) == 0:
         print_code = "pass"
     else:
         for p in prints:
-            print_code += 'f.write({} + "\\\n")'.format(p)
+            print_code += f"{print_indent}f.write({p})\n"
+            print_code += f'{print_indent}f.write("\\n")\n'
 
     config_path = ""
     if task_config is not None:
@@ -355,28 +313,23 @@ if __name__ == "__main__":
     orig_dir = os.getcwd()
     try:
         os.chdir(str(tmpdir))
-        subprocess.check_call(cmd)
+        modified_env = os.environ.copy()
+        modified_env.update(env_override)
+        subprocess.check_call(cmd, env=modified_env)
 
         with open(output_file, "r") as f:
             file_str = f.read()
             output = str.splitlines(file_str)
 
         if expected_outputs is not None:
-            assert len(output) == len(expected_outputs)
+            assert len(output) == len(
+                expected_outputs
+            ), f"Unexpected number of output lines from {task_file}"
             for idx in range(len(output)):
-                assert output[idx] == expected_outputs[idx]
+                assert (
+                    output[idx] == expected_outputs[idx]
+                ), f"Unexpected output for {prints[idx]} : expected {expected_outputs[idx]}, got {output[idx]}"
         # some tests are parsing the file output for more specialized testing.
         return file_str
     finally:
         os.chdir(orig_dir)
-
-
-def create_search_path(
-    search_path: List[str], abspath: bool = False
-) -> ConfigSearchPathImpl:
-    Plugins.register_config_sources()
-    csp = ConfigSearchPathImpl()
-    csp.append("hydra", "pkg://hydra.conf")
-    for sp in search_path:
-        csp.append("test", sp if not abspath else os.path.realpath(sp))
-    return csp

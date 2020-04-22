@@ -1,7 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import List, Optional
 
 from omegaconf import DictConfig
 
@@ -15,16 +15,7 @@ class LoadTrace:
     filename: str
     path: Optional[str]
     provider: Optional[str]
-
-    def __eq__(self, other: Any) -> bool:
-        if isinstance(other, tuple):
-            return (  # type:ignore
-                self.filename == other[0]
-                and self.path == other[1]
-                and self.provider == other[2]
-            )
-        else:
-            return NotImplemented
+    schema_provider: Optional[str] = None
 
 
 class ConfigLoader(ABC):
@@ -35,7 +26,7 @@ class ConfigLoader(ABC):
     @abstractmethod
     def load_configuration(
         self,
-        config_file: Optional[str],
+        config_name: Optional[str],
         overrides: List[str],
         strict: Optional[bool] = None,
     ) -> DictConfig:
