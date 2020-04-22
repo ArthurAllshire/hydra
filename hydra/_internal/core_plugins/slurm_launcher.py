@@ -58,6 +58,7 @@ class SlurmLauncher(Launcher):
             sweep_config = self.config_loader.load_sweep_config(
                 self.config, list(overrides)
             )
+
             with open_dict(sweep_config):
                 sweep_config.hydra.job.id = idx
                 sweep_config.hydra.job.num = idx
@@ -70,5 +71,6 @@ class SlurmLauncher(Launcher):
             slurm_utils.launch_job(sweep_config)
 
             configure_log(self.config.hydra.hydra_logging, self.config.hydra.verbose)
-            time.sleep(1)
+            if sweep_config.wait:
+                time.sleep(1)
         return runs

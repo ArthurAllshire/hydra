@@ -15,11 +15,11 @@ log = logging.getLogger(__name__)
 hdd = "/scratch/hdd001/home/" + user
 ssd = '/scratch/ssd001/home/' + user
 
-date = datetime.datetime.now().strftime("%Y-%m-%d")
+date = datetime.datetime.now()
 
 def eval_val(val):
     if 'eval:' in str(val):
-        return str(eval(val.split('eval:', 1)[1]))
+        return val.split('eval:', 1)[0] + str(eval(val.split('eval:', 1)[1]))
     else:
         return str(val)
 
@@ -31,7 +31,16 @@ def resolve_name(name):
         return eval_val(name)
 
 def get_j_dir(cfg):
-    return os.path.join(ssd, "slurm", date, resolve_name(cfg.slurm.job_name))
+    global date
+    loc_date = date
+
+    # if launching across the day barrier, move launch times for the next 24 hours backwards
+    if cfg.next_day is not None:
+        if loc_date.hour < cfg.next_day:
+            loc_date -= datetime.timedelta(days=1)
+
+    loc_date = loc_date.strftime("%Y-%m-%d")
+    return os.path.join(ssd, "slurm", loc_date, resolve_name(cfg.slurm.job_name))
 
 def get_data_dir(cfg):
     return os.path.join('/scratch', 'ssd001', 'datasets', 'cfg.data.task', 'cfg.data.name')
@@ -48,9 +57,9 @@ def write_slurm(cfg):
     slurm_opts = ['#SBATCH --' + k.replace('_','-') + '=' + resolve_name(v) for k, v in cfg.slurm.items() if v != None]
 
     # default output and error directories
-    if not hasattr(cfg.slurm, 'output'):
+    if 'output' not in cfg.slurm:
         slurm_opts.append('#SBATCH --output={}/log/%j.out'.format(j_dir))
-    if not hasattr(cfg.slurm, 'error'):
+    if 'error' not in cfg.slurm:
         slurm_opts.append('#SBATCH --error={}/log/%j.err'.format(j_dir))
 
     slurm_opts = ['#!/bin/bash'] + slurm_opts + ['bash {0}/scripts/{1}.sh'.format(j_dir, resolve_name(cfg.slurm.job_name))]
@@ -71,8 +80,8 @@ def write_sh(cfg, overrides):
     if not os.path.exists(scripts_dir):
         Path(scripts_dir).mkdir(parents=True, exist_ok=True)
 
-    if 'venv' in cfg.slurm:
-        venv_sh = '. /h/$USER/venv/{}/bin/activate'.format(cfg.slurm.venv)
+    if 'venv' in cfg:
+        venv_sh = '. /h/$USER/venv/{}/bin/activate'.format(cfg.venv)
     else:
         venv_sh = ''
 
@@ -108,9 +117,14 @@ def launch_job(cfg):
         Path(log_dir).mkdir(parents=True, exist_ok=True)
 
     # launch safe only when < 100 jobs running
-    num_running = int(subprocess.run('squeue -u $USER | grep R | wc -l', shell=True, stdout=subprocess.PIPE).stdout.decode('utf-8'))
-    while(num_running > 100):
-        log.info("{} jobs running, waiting to run more...".format(num_running))
+    while(True):
+        num_running = int(subprocess.run('squeue -u $USER | grep R | wc -l', shell=True, stdout=subprocess.PIPE).stdout.decode('utf-8')) - 1
+        num_pending = int(subprocess.run('squeue -u $USER | grep PD | wc -l', shell=True, stdout=subprocess.PIPE).stdout.decode('utf-8'))
+
+        if (cfg.max_running == -1 or num_running < cfg.max_running) and \
+           (cfg.max_pending == -1 or num_pending < cfg.max_pending):
+               break
+        print("{} jobs running and {} jobs pending, waiting...".format(num_running, num_pending))
         time.sleep(10)
-        num_running = int(subprocess.run('squeue -u $USER | grep R | wc -l', shell=True, stdout=subprocess.PIPE).stdout.decode('utf-8'))
+
     subprocess.run('sbatch {0}/scripts/{1}.slrm'.format(j_dir, resolve_name(cfg.slurm.job_name)), shell=True)

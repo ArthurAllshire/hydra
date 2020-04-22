@@ -75,7 +75,13 @@ def filter_overrides(overrides: Sequence[str]) -> Sequence[str]:
     :param overrides: overrides list
     :return: returning a new overrides list with all the keys starting with hydra. filtered.
     """
-    return [x for x in overrides if not x.startswith("hydra.")]
+    overrides = list(overrides)
+    for i in range(len(overrides)):
+        opt, val = overrides[i].split('=', 1)
+        if "$" in val:
+            overrides[i] = '='.join([opt, '"' + val.replace('$', '\$') + '"'])
+
+    return [x for x in overrides if not (x.startswith("hydra.") or x.startswith("slurm."))]
 
 
 def run_job(
