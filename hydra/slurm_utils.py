@@ -88,7 +88,9 @@ def write_sh(cfg, overrides):
     with open(os.path.join(j_dir, "scripts", resolve_name(cfg.slurm.job_name) + '.sh'), 'w') as shf:
         shf.write(
 """#!/bin/bash
-ln -s /checkpoint/$USER/$SLURM_JOB_ID {0}/$SLURM_JOB_ID
+if [ -d /checkpoint/$USER/$SLURM_JOB_ID ]; then
+    ln -s /checkpoint/$USER/$SLURM_JOB_ID {0}/$SLURM_JOB_ID
+fi
 touch {0}/$SLURM_JOB_ID/DELAYPURGE
 {2}
 python3 {3} {4}
