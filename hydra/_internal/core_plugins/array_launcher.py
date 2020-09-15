@@ -2,15 +2,11 @@
 import logging
 from pathlib import Path
 from typing import List, Optional, Sequence
-import os
-import time
-import sys
 
 from omegaconf import DictConfig, open_dict
 
 from hydra.core.config_loader import ConfigLoader
 from hydra.core.hydra_config import HydraConfig
-from hydra import utils, slurm_utils
 from hydra.core.utils import (
     JobReturn,
     configure_log,
@@ -24,7 +20,7 @@ from hydra.types import TaskFunction
 log = logging.getLogger(__name__)
 
 
-class SlurmLauncher(Launcher):
+class ArrayLauncher(Launcher):
     def __init__(self) -> None:
         super().__init__()
         self.config: Optional[DictConfig] = None
@@ -52,16 +48,14 @@ class SlurmLauncher(Launcher):
         configure_log(self.config.hydra.hydra_logging, self.config.hydra.verbose)
         sweep_dir = self.config.hydra.sweep.dir
         Path(str(sweep_dir)).mkdir(parents=True, exist_ok=True)
-        log.info("Launching {} jobs on slurm".format(len(job_overrides)))
+        log.info("Launching {} jobs locally".format(len(job_overrides)))
         runs: List[JobReturn] = []
-
         for idx, overrides in enumerate(job_overrides):
             idx = initial_job_idx + idx
             log.info("\t#{} : {}".format(idx, " ".join(filter_overrides(overrides))))
             sweep_config = self.config_loader.load_sweep_config(
                 self.config, list(overrides)
             )
-
             with open_dict(sweep_config):
                 sweep_config.hydra.job.id = idx
                 sweep_config.hydra.job.num = idx
@@ -69,11 +63,12 @@ class SlurmLauncher(Launcher):
 
             log.info("\tJob name : {}".format(slurm_utils.resolve_name(sweep_config.slurm.job_name)))
 
-            slurm_utils.write_slurm(sweep_config)
-            slurm_utils.write_sh(sweep_config, " ".join(filter_overrides(overrides)))
-            slurm_utils.launch_job(sweep_config)
+            # write overrides to file
+            # write job names to file
 
-            configure_log(self.config.hydra.hydra_logging, self.config.hydra.verbose)
-            if sweep_config.wait:
-                time.sleep(1)
+        # write slrm array
+        # write bash logic to grab filename and job name
+
+
         return runs
+
