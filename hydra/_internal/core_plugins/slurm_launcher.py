@@ -1,5 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Sequence
 import os
@@ -9,6 +10,7 @@ import sys
 from omegaconf import DictConfig, open_dict
 
 from hydra.core.config_loader import ConfigLoader
+from hydra.core.config_store import ConfigStore
 from hydra.core.hydra_config import HydraConfig
 from hydra import utils, slurm_utils
 from hydra.core.utils import (
@@ -23,6 +25,14 @@ from hydra.types import TaskFunction
 
 log = logging.getLogger(__name__)
 
+@dataclass
+class SlurmLauncherConf:
+    _target_: str = "hydra._internal.core_plugins.slurm_launcher.SlurmLauncher"
+
+
+ConfigStore.instance().store(
+    group="hydra/launcher", name="slurm", node=SlurmLauncherConf, provider="hydra"
+)
 
 class SlurmLauncher(Launcher):
     def __init__(self) -> None:
@@ -56,6 +66,7 @@ class SlurmLauncher(Launcher):
         runs: List[JobReturn] = []
 
         for idx, overrides in enumerate(job_overrides):
+            print(overrides)
             idx = initial_job_idx + idx
             log.info("\t#{} : {}".format(idx, " ".join(filter_overrides(overrides))))
             sweep_config = self.config_loader.load_sweep_config(
@@ -70,6 +81,7 @@ class SlurmLauncher(Launcher):
             log.info("\tJob name : {}".format(slurm_utils.resolve_name(sweep_config.slurm.job_name)))
 
             slurm_utils.write_slurm(sweep_config)
+            print(filter_overrides(overrides))
             slurm_utils.write_sh(sweep_config, " ".join(filter_overrides(overrides)))
             slurm_utils.launch_job(sweep_config)
 

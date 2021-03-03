@@ -25,7 +25,7 @@ def eval_val(val):
 
 def resolve_name(name):
     if isinstance(name, listconfig.ListConfig):
-        name_list = [eval_val(str(name[i])) for i in range(len(name)) if name[i] != None]
+        name_list = [eval_val(str(name[i])) for i in range(len(name)) if name[i] is not None]
         return '_'.join(name_list)
     else:
         return eval_val(name)
@@ -35,9 +35,9 @@ def get_j_dir(cfg):
     loc_date = date
 
     # if launching across the day barrier, move launch times for the next 24 hours backwards
-    if cfg.next_day is not None:
-        if loc_date.hour < cfg.next_day:
-            loc_date -= datetime.timedelta(days=1)
+    #if cfg.next_day is not None:
+    #    if loc_date.hour < cfg.next_day:
+    #        loc_date -= datetime.timedelta(days=1)
 
     loc_date = loc_date.strftime("%Y-%m-%d")
     return os.path.join(ssd, "slurm", loc_date, resolve_name(cfg.slurm.job_name))
@@ -80,7 +80,9 @@ def write_sh(cfg, overrides):
     if not os.path.exists(scripts_dir):
         Path(scripts_dir).mkdir(parents=True, exist_ok=True)
 
-    if 'venv' in cfg:
+    if 'conda' in cfg:
+        venv_sh = 'source /h/$USER/miniconda3/etc/profile.d/conda.sh\nconda activate {}'.format(cfg.conda)
+    elif 'venv' in cfg:
         venv_sh = '. /h/$USER/venv/{}/bin/activate'.format(cfg.venv)
     else:
         venv_sh = ''
