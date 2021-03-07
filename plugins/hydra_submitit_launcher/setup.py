@@ -6,7 +6,7 @@ with open("README.md", "r") as fh:
     LONG_DESC = fh.read()
     setup(
         name="hydra-submitit-launcher",
-        version="1.0.1",
+        version="1.2.0",
         author="Jeremy Rapin, Jieru Hu, Omry Yadan",
         author_email="jrapin@fb.com, jieru@fb.com, omry@fb.com",
         description="Submitit Launcher for Hydra apps",
@@ -18,6 +18,7 @@ with open("README.md", "r") as fh:
             "License :: OSI Approved :: MIT License",
             "Programming Language :: Python :: 3.7",
             "Programming Language :: Python :: 3.8",
+            "Programming Language :: Python :: 3.9",
             "Operating System :: MacOS",
             "Operating System :: POSIX :: Linux",
             "Development Status :: 4 - Beta",

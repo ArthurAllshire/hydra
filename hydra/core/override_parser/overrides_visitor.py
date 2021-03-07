@@ -3,7 +3,7 @@ import sys
 import warnings
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from antlr4 import TerminalNode, Token
+from antlr4 import ParserRuleContext, TerminalNode, Token
 from antlr4.error.ErrorListener import ErrorListener
 from antlr4.tree.Tree import TerminalNodeImpl
 
@@ -46,37 +46,202 @@ class HydraOverrideVisitor(OverrideParserVisitor):  # type: ignore
         return ctx.getText()  # type: ignore
 
     def visitKey(self, ctx: OverrideParser.KeyContext) -> Key:
-        # key : packageOrGroup (AT package? (COLON package)? )?;
+        # key : packageOrGroup (AT package)?
 
         nc = ctx.getChildCount()
-        pkg1 = None
-        pkg2 = None
+        package = None
         if nc == 1:
             # packageOrGroup
             key = ctx.getChild(0).getText()
         elif nc > 1:
             key = ctx.getChild(0).getText()
-            if ctx.getChild(1).symbol.text == "@:":
-                pkg1 = None
-                pkg2 = ctx.getChild(2).getText()
-            elif ctx.getChild(1).symbol.text == "@":
-                pkg1 = ctx.getChild(2).getText()
-                if nc > 3:
-                    assert ctx.getChild(3).symbol.text == ":"
-                    pkg2 = ctx.getChild(4).getText()
+            if ctx.getChild(1).symbol.text == "@":
+                package = ctx.getChild(2).getText()
             else:
                 assert False
-
         else:
             assert False
 
-        return Key(key_or_group=key, pkg1=pkg1, pkg2=pkg2)
+        return Key(key_or_group=key, package=package)
 
     def is_ws(self, c: Any) -> bool:
         return isinstance(c, TerminalNodeImpl) and c.symbol.type == OverrideLexer.WS
 
     def visitPrimitive(
         self, ctx: OverrideParser.PrimitiveContext
+    ) -> Optional[Union[QuotedString, int, bool, float, str]]:
+        return self._createPrimitive(ctx)
+
+    def visitListContainer(
+        self, ctx: OverrideParser.ListContainerContext
+    ) -> List[ParsedElementType]:
+        ret: List[ParsedElementType] = []
+
+        idx = 0
+        while True:
+            element = ctx.element(idx)
+            if element is None:
+                break
+            else:
+                idx = idx + 1
+                ret.append(self.visitElement(element))
+        return ret
+
+    def visitDictContainer(
+        self, ctx: OverrideParser.DictContainerContext
+    ) -> Dict[str, ParsedElementType]:
+        assert self.is_matching_terminal(ctx.getChild(0), OverrideLexer.BRACE_OPEN)
+        return dict(
+            self.visitDictKeyValuePair(ctx.getChild(i))
+            for i in range(1, ctx.getChildCount() - 1, 2)
+        )
+
+    def visitDictKey(self, ctx: OverrideParser.DictKeyContext) -> Any:
+        return self._createPrimitive(ctx)
+
+    def visitDictKeyValuePair(
+        self, ctx: OverrideParser.DictKeyValuePairContext
+    ) -> Tuple[str, ParsedElementType]:
+        children = ctx.getChildren()
+        item = next(children)
+        assert isinstance(item, OverrideParser.DictKeyContext)
+        pkey = self.visitDictKey(item)
+        assert self.is_matching_terminal(next(children), OverrideLexer.COLON)
+        value = next(children)
+        assert isinstance(value, OverrideParser.ElementContext)
+        return pkey, self.visitElement(value)
+
+    def visitElement(self, ctx: OverrideParser.ElementContext) -> ParsedElementType:
+        assert isinstance(ctx, OverrideParser.ElementContext)
+        if ctx.function():
+            return self.visitFunction(ctx.function())  # type: ignore
+        elif ctx.primitive():
+            return self.visitPrimitive(ctx.primitive())
+        elif ctx.listContainer():
+            return self.visitListContainer(ctx.listContainer())
+        elif ctx.dictContainer():
+            return self.visitDictContainer(ctx.dictContainer())
+        else:
+            assert False
+
+    def visitValue(
+        self, ctx: OverrideParser.ValueContext
+    ) -> Union[ChoiceSweep, RangeSweep, IntervalSweep, ParsedElementType]:
+        if ctx.element():
+            return self.visitElement(ctx.element())
+        elif ctx.simpleChoiceSweep() is not None:
+            return self.visitSimpleChoiceSweep(ctx.simpleChoiceSweep())
+        assert False
+
+    def visitOverride(self, ctx: OverrideParser.OverrideContext) -> Override:
+        override_type = OverrideType.CHANGE
+        children = ctx.getChildren()
+        first_node = next(children)
+        if isinstance(first_node, TerminalNodeImpl):
+            symbol_text = first_node.symbol.text
+            if symbol_text == "+":
+                override_type = OverrideType.ADD
+                key_node = next(children)
+                if self.is_matching_terminal(key_node, OverrideLexer.PLUS):
+                    override_type = OverrideType.FORCE_ADD
+                    key_node = next(children)
+
+            elif symbol_text == "~":
+                override_type = OverrideType.DEL
+                key_node = next(children)
+            else:
+                assert False
+        else:
+            key_node = first_node
+
+        key = self.visitKey(key_node)
+        value: Union[ChoiceSweep, RangeSweep, IntervalSweep, ParsedElementType]
+        eq_node = next(children)
+        if (
+            override_type == OverrideType.DEL
+            and isinstance(eq_node, TerminalNode)
+            and eq_node.symbol.type == Token.EOF
+        ):
+            value = None
+            value_type = None
+        else:
+            assert self.is_matching_terminal(eq_node, OverrideLexer.EQUAL)
+            if ctx.value() is None:
+                value = ""
+                value_type = ValueType.ELEMENT
+            else:
+                value = self.visitValue(ctx.value())
+                if isinstance(value, ChoiceSweep):
+                    if value.simple_form:
+                        value_type = ValueType.SIMPLE_CHOICE_SWEEP
+                    else:
+                        value_type = ValueType.CHOICE_SWEEP
+                elif isinstance(value, Glob):
+                    value_type = ValueType.GLOB_CHOICE_SWEEP
+                elif isinstance(value, IntervalSweep):
+                    value_type = ValueType.INTERVAL_SWEEP
+                elif isinstance(value, RangeSweep):
+                    value_type = ValueType.RANGE_SWEEP
+                else:
+                    value_type = ValueType.ELEMENT
+
+        return Override(
+            type=override_type,
+            key_or_group=key.key_or_group,
+            _value=value,
+            value_type=value_type,
+            package=key.package,
+        )
+
+    def is_matching_terminal(self, node: Any, symbol_type: int) -> bool:
+        return isinstance(node, TerminalNodeImpl) and node.symbol.type == symbol_type
+
+    def visitSimpleChoiceSweep(
+        self, ctx: OverrideParser.SimpleChoiceSweepContext
+    ) -> ChoiceSweep:
+        ret = []
+        for child in ctx.getChildren(
+            predicate=lambda x: not self.is_matching_terminal(x, OverrideLexer.COMMA)
+        ):
+            ret.append(self.visitElement(child))
+        return ChoiceSweep(simple_form=True, list=ret)
+
+    def visitFunction(self, ctx: OverrideParser.FunctionContext) -> Any:
+        args = []
+        kwargs = {}
+        children = ctx.getChildren()
+        func_name = next(children).getText()
+        assert self.is_matching_terminal(next(children), OverrideLexer.POPEN)
+        in_kwargs = False
+        while True:
+            cur = next(children)
+            if self.is_matching_terminal(cur, OverrideLexer.PCLOSE):
+                break
+
+            if isinstance(cur, OverrideParser.ArgNameContext):
+                in_kwargs = True
+                name = cur.getChild(0).getText()
+                cur = next(children)
+                value = self.visitElement(cur)
+                kwargs[name] = value
+            else:
+                if self.is_matching_terminal(cur, OverrideLexer.COMMA):
+                    continue
+                if in_kwargs:
+                    raise HydraException("positional argument follows keyword argument")
+                value = self.visitElement(cur)
+                args.append(value)
+
+        function = FunctionCall(name=func_name, args=args, kwargs=kwargs)
+        try:
+            return self.functions.eval(function)
+        except Exception as e:
+            raise HydraException(
+                f"{type(e).__name__} while evaluating '{ctx.getText()}': {e}"
+            ) from e
+
+    def _createPrimitive(
+        self, ctx: ParserRuleContext
     ) -> Optional[Union[QuotedString, int, bool, float, str]]:
         ret: Optional[Union[int, bool, float, str]]
         first_idx = 0
@@ -143,167 +308,6 @@ class HydraOverrideVisitor(OverrideParserVisitor):  # type: ignore
             else:
                 return node.getText()  # type: ignore
         return ret
-
-    def visitListValue(
-        self, ctx: OverrideParser.ListValueContext
-    ) -> List[ParsedElementType]:
-        ret: List[ParsedElementType] = []
-
-        idx = 0
-        while True:
-            element = ctx.element(idx)
-            if element is None:
-                break
-            else:
-                idx = idx + 1
-                ret.append(self.visitElement(element))
-        return ret
-
-    def visitDictValue(
-        self, ctx: OverrideParser.DictValueContext
-    ) -> Dict[str, ParsedElementType]:
-        assert self.is_matching_terminal(ctx.getChild(0), OverrideLexer.BRACE_OPEN)
-        return dict(
-            self.visitDictKeyValuePair(ctx.getChild(i))
-            for i in range(1, ctx.getChildCount() - 1, 2)
-        )
-
-    def visitDictKeyValuePair(
-        self, ctx: OverrideParser.DictKeyValuePairContext
-    ) -> Tuple[str, ParsedElementType]:
-        children = ctx.getChildren()
-        item = next(children)
-        assert self.is_matching_terminal(item, OverrideLexer.ID)
-        pkey = item.getText()
-        assert self.is_matching_terminal(next(children), OverrideLexer.COLON)
-        value = next(children)
-        assert isinstance(value, OverrideParser.ElementContext)
-        return pkey, self.visitElement(value)
-
-    def visitElement(self, ctx: OverrideParser.ElementContext) -> ParsedElementType:
-        assert isinstance(ctx, OverrideParser.ElementContext)
-        if ctx.function():
-            return self.visitFunction(ctx.function())  # type: ignore
-        elif ctx.primitive():
-            return self.visitPrimitive(ctx.primitive())
-        elif ctx.listValue():
-            return self.visitListValue(ctx.listValue())
-        elif ctx.dictValue():
-            return self.visitDictValue(ctx.dictValue())
-        else:
-            assert False
-
-    def visitValue(
-        self, ctx: OverrideParser.ValueContext
-    ) -> Union[ChoiceSweep, RangeSweep, IntervalSweep, ParsedElementType]:
-        if ctx.element():
-            return self.visitElement(ctx.element())
-        elif ctx.simpleChoiceSweep() is not None:
-            return self.visitSimpleChoiceSweep(ctx.simpleChoiceSweep())
-        assert False
-
-    def visitOverride(self, ctx: OverrideParser.OverrideContext) -> Override:
-        override_type = OverrideType.CHANGE
-        children = ctx.getChildren()
-        first_node = next(children)
-        if isinstance(first_node, TerminalNodeImpl):
-            symbol_text = first_node.symbol.text
-            if symbol_text == "+":
-                override_type = OverrideType.ADD
-            elif symbol_text == "~":
-                override_type = OverrideType.DEL
-            else:
-                assert False
-            key_node = next(children)
-        else:
-            key_node = first_node
-
-        key = self.visitKey(key_node)
-        value: Union[ChoiceSweep, RangeSweep, IntervalSweep, ParsedElementType]
-        eq_node = next(children)
-        if (
-            override_type == OverrideType.DEL
-            and isinstance(eq_node, TerminalNode)
-            and eq_node.symbol.type == Token.EOF
-        ):
-            value = None
-            value_type = None
-        else:
-            assert self.is_matching_terminal(eq_node, OverrideLexer.EQUAL)
-            if ctx.value() is None:
-                value = ""
-                value_type = ValueType.ELEMENT
-            else:
-                value = self.visitValue(ctx.value())
-                if isinstance(value, ChoiceSweep):
-                    if value.simple_form:
-                        value_type = ValueType.SIMPLE_CHOICE_SWEEP
-                    else:
-                        value_type = ValueType.CHOICE_SWEEP
-                elif isinstance(value, Glob):
-                    value_type = ValueType.GLOB_CHOICE_SWEEP
-                elif isinstance(value, IntervalSweep):
-                    value_type = ValueType.INTERVAL_SWEEP
-                elif isinstance(value, RangeSweep):
-                    value_type = ValueType.RANGE_SWEEP
-                else:
-                    value_type = ValueType.ELEMENT
-
-        return Override(
-            type=override_type,
-            key_or_group=key.key_or_group,
-            _value=value,
-            value_type=value_type,
-            pkg1=key.pkg1,
-            pkg2=key.pkg2,
-        )
-
-    def is_matching_terminal(self, node: Any, symbol_type: int) -> bool:
-        return isinstance(node, TerminalNodeImpl) and node.symbol.type == symbol_type
-
-    def visitSimpleChoiceSweep(
-        self, ctx: OverrideParser.SimpleChoiceSweepContext
-    ) -> ChoiceSweep:
-        ret = []
-        for child in ctx.getChildren(
-            predicate=lambda x: not self.is_matching_terminal(x, OverrideLexer.COMMA)
-        ):
-            ret.append(self.visitElement(child))
-        return ChoiceSweep(simple_form=True, list=ret)
-
-    def visitFunction(self, ctx: OverrideParser.FunctionContext) -> Any:
-        args = []
-        kwargs = {}
-        children = ctx.getChildren()
-        func_name = next(children).getText()
-        assert self.is_matching_terminal(next(children), OverrideLexer.POPEN)
-        in_kwargs = False
-        while True:
-            cur = next(children)
-            if self.is_matching_terminal(cur, OverrideLexer.PCLOSE):
-                break
-
-            if isinstance(cur, OverrideParser.ArgNameContext):
-                in_kwargs = True
-                name = cur.getChild(0).getText()
-                cur = next(children)
-                value = self.visitElement(cur)
-                kwargs[name] = value
-            else:
-                if self.is_matching_terminal(cur, OverrideLexer.COMMA):
-                    continue
-                if in_kwargs:
-                    raise HydraException("positional argument follows keyword argument")
-                value = self.visitElement(cur)
-                args.append(value)
-
-        function = FunctionCall(name=func_name, args=args, kwargs=kwargs)
-        try:
-            return self.functions.eval(function)
-        except Exception as e:
-            raise HydraException(
-                f"{type(e).__name__} while evaluating '{ctx.getText()}': {e}"
-            ) from e
 
 
 class HydraErrorListener(ErrorListener):  # type: ignore

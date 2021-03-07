@@ -3,44 +3,53 @@ id: config_groups
 title: Grouping config files
 ---
 
-[![Example](https://img.shields.io/badge/-Example-informational)](https://github.com/facebookresearch/hydra/tree/master/examples/tutorials/basic/your_first_hydra_app/4_config_groups)
+import {ExampleGithubLink} from "@site/src/components/GithubLink"
+
+<ExampleGithubLink to="examples/tutorials/basic/your_first_hydra_app/4_config_groups"/>
 
 Suppose you want to benchmark your application on each of PostgreSQL and MySQL. To do this, use config groups. 
 
 A _**Config Group**_ is a named group with a set of valid options.
+Selecting a non-existent config option generates an error message with the valid options.
 
-* The config options are mutually exclusive. Only one can be selected.
-* Selecting a non-existent config option generates an error message with the valid options.
-
+### Creating config groups
 To create a config group, create a directory. e.g. `db` to hold a file for each database configuration option. 
 Since we are expecting to have multiple config groups, we will proactively move all the configuration files 
 into a `conf` directory.
 
+<div className="row">
+<div className="col col--4">
 
 ``` text title="Directory layout"
-├── conf
-│   └── db
-│       ├── mysql.yaml
-│       └── postgresql.yaml
+├─ conf
+│  └─ db
+│      ├─ mysql.yaml
+│      └─ postgresql.yaml
 └── my_app.py
 ```
+</div>
+
+<div className="col col--4">
 
 ```yaml title="db/mysql.yaml"
-# @package _group_
 driver: mysql
 user: omry
 password: secret
+
+
 ```
-The config group determines the `package` of the config content inside the final config object.  
-```yaml title="Interpretation of db/mysql.yaml" {1}
-db:
-  driver: mysql
-  user: omry
-  password: secret 
+</div><div className="col col--4">
+
+```yaml title="db/postgresql.yaml"
+driver: postgresql
+user: postgres_user
+password: drowssap
+timeout: 10
+
 ```
-In Hydra 1.1 `_group_` will become the default package.  
-For now, add `# @package _group_` at the top of your config group files.  
-Learn more about packages directive [here](/advanced/overriding_packages.md). 
+
+</div>
+</div>
 
 ### Using config groups
 Since we moved all the configs into the `conf` directory, we need to tell Hydra where to find them using the `config_path` parameter.
@@ -57,16 +66,20 @@ $ python my_app.py
 {}
 ```
 
-You can append an item a config group to the `Defaults List`.  
-The `Defaults List` is described on the next page.
-```yaml
+Select an item from a config group with `+GROUP=OPTION`, e.g: 
+```yaml {2}
 $ python my_app.py +db=postgresql
 db:
   driver: postgresql
   pass: drowssap
   timeout: 10
-  user: postgre_user
+  user: postgres_user
 ```
+
+By default, the config group determines where the config content is placed inside the final config object. 
+In Hydra, the path to the config content is referred to as the config `package`. 
+The package of `db/postgresql.yaml` is `db`:
+
 
 Like before, you can still override individual values in the resulting config:
 ```yaml
@@ -75,25 +88,12 @@ db:
   driver: postgresql
   pass: drowssap
   timeout: 20
-  user: postgre_user
+  user: postgres_user
 ```
 
-### More advanced usages of config groups
-Config groups can be nested. For example the config group `db/mysql/storage_engine` can contain `innodb.yaml` and `myisam.yaml`.
-When selecting an option from a nested config group, use `/`:
-```
-$ python my_app.py +db=mysql +db/mysql/storage_engine=innodb
-db:
-  driver: mysql
-  user: omry
-  password: secret 
-  mysql:
-    storage_engine:
-      innodb_data_file_path: /var/lib/mysql/ibdata1
-      max_file_size: 1G
-```
-
-This simple example also demonstrated a very powerful feature of Hydra:
-You can compose your configuration object from multiple configuration groups.
+### Advanced topics
+ - Config content can be relocated via package overrides. See [Reference Manual/Packages](advanced/overriding_packages.md).    
+ - Multiple options can be selected from the same Config Group by specifying them as a list.  
+   See [Common Patterns/Selecting multiple configs from a Config Group](patterns/select_multiple_configs_from_config_group.md)  
 
 

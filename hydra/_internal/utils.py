@@ -1,39 +1,26 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import argparse
-import copy
 import inspect
 import logging.config
 import os
 import sys
-import warnings
 from dataclasses import dataclass
 from os.path import dirname, join, normpath, realpath
 from traceback import print_exc, print_exception
 from types import FrameType
-from typing import (
-    Any,
-    Callable,
-    List,
-    MutableMapping,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
-    Union,
-)
+from typing import Any, Callable, List, Optional, Sequence, Tuple, Union
 
-from omegaconf import DictConfig, OmegaConf, read_write
 from omegaconf.errors import OmegaConfBaseException
 
 from hydra._internal.config_search_path_impl import ConfigSearchPathImpl
 from hydra.core.config_search_path import ConfigSearchPath, SearchPathQuery
-from hydra.core.utils import get_valid_filename, split_config_path
+from hydra.core.utils import get_valid_filename, validate_config_path
 from hydra.errors import (
     CompactHydraException,
     InstantiationException,
     SearchPathException,
 )
-from hydra.types import ObjectConf, TaskFunction
+from hydra.types import TaskFunction
 
 log = logging.getLogger(__name__)
 
@@ -168,6 +155,22 @@ def compute_search_path_dir(
     return search_path_dir
 
 
+def is_under_debugger() -> bool:
+    """
+    Attempts to detect if running under a debugger
+    """
+    frames = inspect.stack()
+    if len(frames) >= 3:
+        filename = frames[-3].filename
+        if filename.endswith("/pdb.py"):
+            return True
+        elif filename.endswith("/pydevd.py"):
+            return True
+
+    # unknown debugging will sometimes set sys.trace
+    return sys.gettrace() is not None
+
+
 def create_automatic_config_search_path(
     calling_file: Optional[str],
     calling_module: Optional[str],
@@ -206,7 +209,7 @@ def run_and_report(func: Any) -> Any:
     try:
         return func()
     except Exception as ex:
-        if _is_env_set("HYDRA_FULL_ERROR"):
+        if _is_env_set("HYDRA_FULL_ERROR") or is_under_debugger():
             raise ex
         else:
             if isinstance(ex, CompactHydraException):
@@ -285,7 +288,6 @@ def _run_hydra(
     task_function: TaskFunction,
     config_path: Optional[str],
     config_name: Optional[str],
-    strict: Optional[bool],
 ) -> None:
 
     from hydra.core.global_hydra import GlobalHydra
@@ -305,10 +307,10 @@ def _run_hydra(
         task_name,
     ) = detect_calling_file_or_module_from_task_function(task_function)
 
-    config_dir, config_name = split_config_path(config_path, config_name)
+    validate_config_path(config_path)
 
     search_path = create_automatic_config_search_path(
-        calling_file, calling_module, config_dir
+        calling_file, calling_module, config_path
     )
 
     def add_conf_dir() -> None:
@@ -327,7 +329,7 @@ def _run_hydra(
     run_and_report(add_conf_dir)
     hydra = run_and_report(
         lambda: Hydra.create_main_hydra2(
-            task_name=task_name, config_search_path=search_path, strict=strict
+            task_name=task_name, config_search_path=search_path
         )
     )
 
@@ -343,7 +345,11 @@ def _run_hydra(
 
         has_show_cfg = args.cfg is not None
         num_commands = (
-            args.run + has_show_cfg + args.multirun + args.shell_completion + args.info
+            args.run
+            + has_show_cfg
+            + args.multirun
+            + args.shell_completion
+            + (args.info is not None)
         )
         if num_commands > 1:
             raise ValueError(
@@ -383,7 +389,9 @@ def _run_hydra(
                 )
             )
         elif args.info:
-            hydra.show_info(config_name=config_name, overrides=args.overrides)
+            hydra.show_info(
+                args.info, config_name=config_name, overrides=args.overrides
+            )
         else:
             sys.stderr.write("Command not specified\n")
             sys.exit(1)
@@ -413,6 +421,7 @@ def _get_completion_help() -> str:
             completion_info.append(head)
             completion_info.append(plugin_cls.help(cmd).format(_get_exec_command()))
         completion_info.append("")
+
     completion_help = "\n".join([f"    {x}" if x else x for x in completion_info])
     return completion_help
 
@@ -453,11 +462,16 @@ def get_args_parser() -> argparse.ArgumentParser:
         help="Run multiple jobs with the configured launcher and sweeper",
     )
 
+    # defer building the completion help string until we actually need to render it
+    class LazyCompletionHelp:
+        def __repr__(self) -> str:
+            return f"Install or Uninstall shell completion:\n{_get_completion_help()}"
+
     parser.add_argument(
         "--shell-completion",
         "-sc",
         action="store_true",
-        help=f"Install or Uninstall shell completion:\n{_get_completion_help()}",
+        help=LazyCompletionHelp(),  # type: ignore
     )
 
     parser.add_argument(
@@ -479,8 +493,15 @@ def get_args_parser() -> argparse.ArgumentParser:
         help="Adds an additional config dir to the config search path",
     )
 
+    info_choices = ["all", "defaults", "defaults-tree", "config", "plugins"]
     parser.add_argument(
-        "--info", "-i", action="store_true", help="Print Hydra information"
+        "--info",
+        "-i",
+        const="all",
+        nargs="?",
+        action="store",
+        choices=info_choices,
+        help=f"Print Hydra information [{'|'.join(info_choices)}]",
     )
     return parser
 
@@ -499,24 +520,6 @@ def get_column_widths(matrix: List[List[str]]) -> List[int]:
             widths[idx] = max(widths[idx], len(col))
 
     return widths
-
-
-def _instantiate_class(
-    clazz: Type[Any], config: Union[ObjectConf, DictConfig], *args: Any, **kwargs: Any
-) -> Any:
-    # TODO: pull out to caller?
-    final_kwargs = _get_kwargs(config, **kwargs)
-    return clazz(*args, **final_kwargs)
-
-
-def _call_callable(
-    fn: Callable[..., Any],
-    config: Union[ObjectConf, DictConfig],
-    *args: Any,
-    **kwargs: Any,
-) -> Any:
-    final_kwargs = _get_kwargs(config, **kwargs)
-    return fn(*args, **final_kwargs)
 
 
 def _locate(path: str) -> Union[type, Callable[..., Any]]:
@@ -567,83 +570,14 @@ def _locate(path: str) -> Union[type, Callable[..., Any]]:
         raise ValueError(f"Invalid type ({type(obj)}) found for {path}")
 
 
-def _get_kwargs(config: Union[ObjectConf, DictConfig], **kwargs: Any) -> Any:
+def _get_cls_name(config: Any, pop: bool = True) -> str:
+    if "_target_" not in config:
+        raise InstantiationException("Input config does not have a `_target_` field")
 
-    if isinstance(config, ObjectConf):
-        config = OmegaConf.structured(config)
-        if config.params is not None:
-            params = config.params
-        else:
-            params = OmegaConf.create()
+    if pop:
+        classname = config.pop("_target_")
     else:
-        config = copy.deepcopy(config)
-        if "params" in config:
-            msg = (
-                "\nField 'params' is deprecated since Hydra 1.0 and will be removed in Hydra 1.1."
-                "\nInline the content of params directly at the containing node."
-                "\nSee https://hydra.cc/docs/next/upgrades/0.11_to_1.0/object_instantiation_changes"
-            )
-            warnings.warn(category=UserWarning, message=msg)
-            params = config.params
-        else:
-            params = OmegaConf.create()
-            for k, v in config.items():
-                if k != "_target_":
-                    params[k] = v
-
-    assert isinstance(
-        params, MutableMapping
-    ), f"Input config params are expected to be a mapping, found {type(config.params).__name__}"
-
-    if isinstance(config, DictConfig):
-        assert isinstance(params, DictConfig)
-        params._set_parent(config)
-
-    config_overrides = {}
-    passthrough = {}
-    for k, v in kwargs.items():
-        if k in params:
-            config_overrides[k] = v
-        else:
-            passthrough[k] = v
-    final_kwargs = {}
-
-    with read_write(params):
-        params.merge_with(config_overrides)
-
-    for k, v in params.items():
-        final_kwargs[k] = v
-
-    for k, v in passthrough.items():
-        final_kwargs[k] = v
-    return final_kwargs
-
-
-def _get_cls_name(config: DictConfig, pop: bool = True) -> str:
-    def _getcls(field: str) -> str:
-        if pop:
-            classname = config.pop(field)
-        else:
-            classname = config[field]
-        if not isinstance(classname, str):
-            raise InstantiationException(f"_target_ field '{field}' must be a string")
-        return classname
-
-    for field in ["target", "cls", "class"]:
-        if field in config:
-            key = config._get_full_key(field)
-            msg = (
-                f"\nConfig key '{key}' is deprecated since Hydra 1.0 and will be removed in Hydra 1.1."
-                f"\nUse '_target_' instead of '{field}'."
-                f"\nSee https://hydra.cc/docs/next/upgrades/0.11_to_1.0/object_instantiation_changes"
-            )
-            warnings.warn(message=msg, category=UserWarning)
-
-    if "_target_" in config:
-        return _getcls("_target_")
-
-    for field in ["target", "cls", "class"]:
-        if field in config:
-            return _getcls(field)
-
-    raise InstantiationException("Input config does not have a `_target_` field")
+        classname = config["_target_"]
+    if not isinstance(classname, str):
+        raise InstantiationException("_target_ field type must be a string")
+    return classname

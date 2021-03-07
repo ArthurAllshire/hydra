@@ -8,18 +8,19 @@ from pathlib import Path
 from textwrap import dedent
 from typing import Any, List, Optional, Set
 
-import pytest
 from omegaconf import DictConfig, OmegaConf
+from pytest import mark, param, raises
 
 from hydra import MissingConfigException
 from hydra.test_utils.test_utils import (
     TSweepRunner,
     TTaskRunner,
+    assert_regex_match,
     assert_text_same,
     chdir_hydra_root,
-    get_run_output,
     integration_test,
     normalize_newlines,
+    run_python_script,
     run_with_error,
     verify_dir_outputs,
 )
@@ -27,16 +28,14 @@ from hydra.test_utils.test_utils import (
 chdir_hydra_root()
 
 
-@pytest.mark.parametrize(  # type: ignore
-    "calling_file, calling_module", [(".", None), (None, ".")]
-)
+@mark.parametrize("calling_file, calling_module", [(".", None), (None, ".")])
 def test_missing_conf_dir(
     hydra_restore_singletons: Any,
     hydra_task_runner: TTaskRunner,
     calling_file: str,
     calling_module: str,
 ) -> None:
-    with pytest.raises(MissingConfigException):
+    with raises(MissingConfigException):
         with hydra_task_runner(
             calling_file=calling_file,
             calling_module=calling_module,
@@ -46,7 +45,7 @@ def test_missing_conf_dir(
             pass
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
         ("tests/test_apps/app_without_config/my_app.py", None),
@@ -59,7 +58,7 @@ def test_missing_conf_file(
     calling_file: str,
     calling_module: str,
 ) -> None:
-    with pytest.raises(MissingConfigException):
+    with raises(MissingConfigException):
         with hydra_task_runner(
             calling_file=calling_file,
             calling_module=calling_module,
@@ -70,10 +69,10 @@ def test_missing_conf_file(
 
 
 def test_run_dir() -> None:
-    get_run_output(["tests/test_apps/run_dir_test/my_app.py"])
+    run_python_script(["tests/test_apps/run_dir_test/my_app.py"])
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
         ("tests/test_apps/app_without_config/my_app.py", None),
@@ -96,7 +95,7 @@ def test_app_without_config___no_overrides(
         assert task.job_ret.cfg == {}
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
         ("tests/test_apps/hydra_main_rerun/my_app.py", None),
@@ -119,7 +118,7 @@ def test_hydra_main_rerun(
         assert task.job_ret.cfg == {}
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
         ("tests/test_apps/app_without_config/my_app.py", None),
@@ -146,7 +145,7 @@ def test_app_without_config__with_append(
         verify_dir_outputs(task.job_ret, task.overrides)
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
         ("tests/test_apps/app_with_cfg/my_app.py", None),
@@ -174,41 +173,7 @@ def test_app_with_config_file__no_overrides(
         verify_dir_outputs(task.job_ret)
 
 
-@pytest.mark.parametrize(  # type: ignore
-    "calling_file, calling_module",
-    [
-        ("tests/test_apps/app_with_cfg_groups_no_header/my_app.py", None),
-        (None, "tests.test_apps.app_with_cfg_groups_no_header.my_app"),
-    ],
-)
-def test_config_without_package_header_warnings(
-    hydra_restore_singletons: Any,
-    hydra_task_runner: TTaskRunner,
-    calling_file: str,
-    calling_module: str,
-    recwarn: Any,
-) -> None:
-    task = hydra_task_runner(
-        calling_file=calling_file,
-        calling_module=calling_module,
-        config_path="conf",
-        config_name="config.yaml",
-    )
-    with task:
-        assert task.job_ret is not None and task.job_ret.cfg == {
-            "optimizer": {"type": "nesterov", "lr": 0.001}
-        }
-
-    assert len(recwarn) == 1
-    msg = recwarn.pop().message.args[0]
-    assert "Missing @package directive optimizer/nesterov.yaml in " in msg
-    assert (
-        "See https://hydra.cc/docs/next/upgrades/0.11_to_1.0/adding_a_package_directive"
-        in msg
-    )
-
-
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
         ("tests/test_apps/app_with_cfg_groups/my_app.py", None),
@@ -221,12 +186,14 @@ def test_app_with_config_path_backward_compatibility(
     calling_file: str,
     calling_module: str,
 ) -> None:
-    msg = (
-        "\nUsing config_path to specify the config name is deprecated, specify the config name via config_name"
-        "\nSee https://hydra.cc/docs/next/upgrades/0.11_to_1.0/config_path_changes"
+    msg = dedent(
+        """\
+    Using config_path to specify the config name is not supported, specify the config name via config_name.
+    See https://hydra.cc/docs/next/upgrades/0.11_to_1.0/config_path_changes
+    """
     )
 
-    with pytest.warns(expected_warning=UserWarning, match=re.escape(msg)):
+    with raises(ValueError, match=re.escape(msg)):
         task = hydra_task_runner(
             calling_file=calling_file,
             calling_module=calling_module,
@@ -242,7 +209,7 @@ def test_app_with_config_path_backward_compatibility(
             verify_dir_outputs(task.job_ret)
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
         ("tests/test_apps/app_with_cfg/my_app.py", None),
@@ -269,7 +236,7 @@ def test_app_with_config_file__with_overide(
         verify_dir_outputs(task.job_ret, task.overrides)
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
         ("tests/test_apps/app_with_split_cfg/my_app.py", None),
@@ -296,7 +263,7 @@ def test_app_with_split_config(
         verify_dir_outputs(task.job_ret)
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
         ("tests/test_apps/app_with_cfg_groups/my_app.py", None),
@@ -309,7 +276,7 @@ def test_app_with_config_groups__override_dataset__wrong(
     calling_file: str,
     calling_module: str,
 ) -> None:
-    with pytest.raises(MissingConfigException) as ex:
+    with raises(MissingConfigException) as ex:
         with hydra_task_runner(
             calling_file=calling_file,
             calling_module=calling_module,
@@ -318,10 +285,10 @@ def test_app_with_config_groups__override_dataset__wrong(
             overrides=["+optimizer=wrong_name"],
         ):
             pass
-    assert sorted(ex.value.options) == sorted(["adam", "nesterov"])
+    assert sorted(ex.value.options) == sorted(["adam", "nesterov"])  # type: ignore
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
         ("tests/test_apps/app_with_cfg_groups/my_app.py", None),
@@ -348,7 +315,7 @@ def test_app_with_config_groups__override_all_configs(
         verify_dir_outputs(task.job_ret, overrides=task.overrides)
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
         ("tests/test_apps/app_with_custom_launcher/my_app.py", None),
@@ -383,7 +350,7 @@ def test_short_module_name(tmpdir: Path) -> None:
         "examples/tutorials/basic/your_first_hydra_app/2_config_file/my_app.py",
         "hydra.run.dir=" + str(tmpdir),
     ]
-    out, _err = get_run_output(cmd)
+    out, _err = run_python_script(cmd)
     assert OmegaConf.create(out) == {
         "db": {"driver": "mysql", "password": "secret", "user": "omry"}
     }
@@ -401,7 +368,7 @@ def test_hydra_main_module_override_name(tmpdir: Path) -> None:
     )
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "env_name", ["HYDRA_MAIN_MODULE", "FB_PAR_MAIN_MODULE", "FB_XAR_MAIN_MODULE"]
 )
 def test_module_env_override(tmpdir: Path, env_name: str) -> None:
@@ -414,11 +381,11 @@ def test_module_env_override(tmpdir: Path, env_name: str) -> None:
     ]
     modified_env = os.environ.copy()
     modified_env[env_name] = "hydra.test_utils.configs.Foo"
-    result, _err = get_run_output(cmd, env=modified_env)
+    result, _err = run_python_script(cmd, env=modified_env)
     assert OmegaConf.create(result) == {"normal_yaml_config": True}
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "flag,expected_keys",
     [("--cfg=all", ["db", "hydra"]), ("--cfg=hydra", ["hydra"]), ("--cfg=job", ["db"])],
 )
@@ -428,47 +395,52 @@ def test_cfg(tmpdir: Path, flag: str, expected_keys: List[str]) -> None:
         "hydra.run.dir=" + str(tmpdir),
         flag,
     ]
-    result, _err = get_run_output(cmd)
+    result, _err = run_python_script(cmd)
     conf = OmegaConf.create(result)
     for key in expected_keys:
         assert key in conf
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "flags,expected",
     [
-        pytest.param(
+        param(
             ["--cfg=job"],
-            """# @package _global_
-db:
-  driver: mysql
-  user: omry
-  pass: secret
-""",
+            dedent(
+                """\
+                db:
+                  driver: mysql
+                  user: omry
+                  pass: secret
+                """
+            ),
             id="no-package",
         ),
-        pytest.param(
+        param(
             ["--cfg=job", "--package=_global_"],
-            """# @package _global_
-db:
-  driver: mysql
-  user: omry
-  pass: secret
-""",
+            dedent(
+                """\
+                db:
+                  driver: mysql
+                  user: omry
+                  pass: secret
+                """
+            ),
             id="package=_global_",
         ),
-        pytest.param(
+        param(
             ["--cfg=job", "--package=db"],
-            """# @package db
-driver: mysql
-user: omry
-pass: secret
-""",
+            dedent(
+                """\
+                # @package db
+                driver: mysql
+                user: omry
+                pass: secret
+                """
+            ),
             id="package=db",
         ),
-        pytest.param(
-            ["--cfg=job", "--package=db.driver"], "mysql\n", id="package=db.driver"
-        ),
+        param(["--cfg=job", "--package=db.driver"], "mysql\n", id="package=db.driver"),
     ],
 )
 def test_cfg_with_package(tmpdir: Path, flags: List[str], expected: str) -> None:
@@ -477,18 +449,18 @@ def test_cfg_with_package(tmpdir: Path, flags: List[str], expected: str) -> None
         "hydra.run.dir=" + str(tmpdir),
     ] + flags
 
-    result, _err = get_run_output(cmd)
+    result, _err = run_python_script(cmd)
     assert normalize_newlines(result) == expected.rstrip()
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
         ("tests/test_apps/app_with_config_with_free_group/my_app.py", None),
         (None, "tests.test_apps.app_with_config_with_free_group.my_app"),
     ],
 )
-@pytest.mark.parametrize("overrides", [["+free_group=opt1,opt2"]])  # type: ignore
+@mark.parametrize("overrides", [["+free_group=opt1,opt2"]])
 def test_multirun_with_free_override(
     hydra_restore_singletons: Any,
     hydra_sweep_runner: TSweepRunner,
@@ -512,15 +484,11 @@ def test_multirun_with_free_override(
         assert sweep.returns[0][1].cfg == {"group_opt1": True, "free_group_opt2": True}
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
-        pytest.param(
-            "tests/test_apps/sweep_complex_defaults/my_app.py", None, id="file_path"
-        ),
-        pytest.param(
-            None, "tests.test_apps.sweep_complex_defaults.my_app", id="pkg_path"
-        ),
+        param("tests/test_apps/sweep_complex_defaults/my_app.py", None, id="file_path"),
+        param(None, "tests.test_apps.sweep_complex_defaults.my_app", id="pkg_path"),
     ],
 )
 def test_sweep_complex_defaults(
@@ -542,111 +510,133 @@ def test_sweep_complex_defaults(
         assert sweep.returns[0][1].overrides == ["optimizer=nesterov"]
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "script, flag, overrides,expected",
     [
-        pytest.param(
+        param(
             "examples/tutorials/basic/your_first_hydra_app/1_simple_cli/my_app.py",
             "--help",
             ["hydra.help.template=foo"],
             "foo\n",
             id="simple_cli_app",
         ),
-        pytest.param(
+        param(
             "examples/tutorials/basic/your_first_hydra_app/2_config_file/my_app.py",
             "--help",
             ["hydra.help.template=foo"],
             "foo\n",
             id="overriding_help_template",
         ),
-        pytest.param(
+        param(
             "examples/tutorials/basic/your_first_hydra_app/2_config_file/my_app.py",
             "--help",
             ["hydra.help.template=$CONFIG", "db.user=root"],
-            """db:
-  driver: mysql
-  user: root
-  password: secret
-
-""",
+            dedent(
+                """\
+                db:
+                  driver: mysql
+                  user: root
+                  password: secret
+                """
+            ),
             id="overriding_help_template:$CONFIG",
         ),
-        pytest.param(
+        param(
             "examples/tutorials/basic/your_first_hydra_app/2_config_file/my_app.py",
             "--help",
             ["hydra.help.template=$FLAGS_HELP"],
-            """--help,-h : Application's help
---hydra-help : Hydra's help
---version : Show Hydra's version and exit
---cfg,-c : Show config instead of running [job|hydra|all]
---package,-p : Config package to show
---run,-r : Run a job
---multirun,-m : Run multiple jobs with the configured launcher and sweeper
---shell-completion,-sc : Install or Uninstall shell completion:
-    Bash - Install:
-    eval "$(python {script} -sc install=bash)"
-    Bash - Uninstall:
-    eval "$(python {script} -sc uninstall=bash)"
+            dedent(
+                """\
+                --help,-h : Application's help
+                --hydra-help : Hydra's help
+                --version : Show Hydra's version and exit
+                --cfg,-c : Show config instead of running [job|hydra|all]
+                --package,-p : Config package to show
+                --run,-r : Run a job
+                --multirun,-m : Run multiple jobs with the configured launcher and sweeper
+                --shell-completion,-sc : Install or Uninstall shell completion:
+                    Bash - Install:
+                    eval "$(python {script} -sc install=bash)"
+                    Bash - Uninstall:
+                    eval "$(python {script} -sc uninstall=bash)"
 
-    Fish - Install:
-    python {script} -sc install=fish | source
-    Fish - Uninstall:
-    python {script} -sc uninstall=fish | source
+                    Fish - Install:
+                    python {script} -sc install=fish | source
+                    Fish - Uninstall:
+                    python {script} -sc uninstall=fish | source
 
---config-path,-cp : Overrides the config_path specified in hydra.main().
-                    The config_path is relative to the Python file declaring @hydra.main()
---config-name,-cn : Overrides the config_name specified in hydra.main()
---config-dir,-cd : Adds an additional config dir to the config search path
---info,-i : Print Hydra information
-Overrides : Any key=value arguments to override config values (use dots for.nested=overrides)
-""",
+                    Zsh - Install:
+                    Zsh is compatible with the Bash shell completion, see the [documentation]\
+(https://hydra.cc/docs/next/tutorials/basic/running_your_app/tab_completion#zsh-instructions) \
+for details.
+                    eval "$(python {script} -sc install=bash)"
+                    Zsh - Uninstall:
+                    eval "$(python {script} -sc uninstall=bash)"
+
+                --config-path,-cp : Overrides the config_path specified in hydra.main().
+                                    The config_path is relative to the Python file declaring @hydra.main()
+                --config-name,-cn : Overrides the config_name specified in hydra.main()
+                --config-dir,-cd : Adds an additional config dir to the config search path
+                --info,-i : Print Hydra information [all|defaults|defaults-tree|config|plugins]
+                Overrides : Any key=value arguments to override config values (use dots for.nested=overrides)
+                """
+            ),
             id="overriding_help_template:$FLAGS_HELP",
         ),
-        pytest.param(
+        param(
             "examples/tutorials/basic/your_first_hydra_app/4_config_groups/my_app.py",
             "--help",
             ["hydra.help.template=$APP_CONFIG_GROUPS"],
-            """db: mysql, postgresql
-
-""",
+            "db: mysql, postgresql",
             id="overriding_help_template:$APP_CONFIG_GROUPS",
         ),
-        pytest.param(
+        param(
             "examples/tutorials/basic/your_first_hydra_app/2_config_file/my_app.py",
             "--hydra-help",
             ["hydra.hydra_help.template=foo"],
             "foo\n",
             id="overriding_hydra_help_template",
         ),
-        pytest.param(
+        param(
             "examples/tutorials/basic/your_first_hydra_app/2_config_file/my_app.py",
             "--hydra-help",
             ["hydra.hydra_help.template=$FLAGS_HELP"],
-            """--help,-h : Application's help
---hydra-help : Hydra's help
---version : Show Hydra's version and exit
---cfg,-c : Show config instead of running [job|hydra|all]
---package,-p : Config package to show
---run,-r : Run a job
---multirun,-m : Run multiple jobs with the configured launcher and sweeper
---shell-completion,-sc : Install or Uninstall shell completion:
-    Bash - Install:
-    eval "$(python {script} -sc install=bash)"
-    Bash - Uninstall:
-    eval "$(python {script} -sc uninstall=bash)"
+            dedent(
+                """\
+                --help,-h : Application's help
+                --hydra-help : Hydra's help
+                --version : Show Hydra's version and exit
+                --cfg,-c : Show config instead of running [job|hydra|all]
+                --package,-p : Config package to show
+                --run,-r : Run a job
+                --multirun,-m : Run multiple jobs with the configured launcher and sweeper
+                --shell-completion,-sc : Install or Uninstall shell completion:
+                    Bash - Install:
+                    eval "$(python {script} -sc install=bash)"
+                    Bash - Uninstall:
+                    eval "$(python {script} -sc uninstall=bash)"
 
-    Fish - Install:
-    python {script} -sc install=fish | source
-    Fish - Uninstall:
-    python {script} -sc uninstall=fish | source
+                    Fish - Install:
+                    python {script} -sc install=fish | source
+                    Fish - Uninstall:
+                    python {script} -sc uninstall=fish | source
 
---config-path,-cp : Overrides the config_path specified in hydra.main().
-                    The config_path is relative to the Python file declaring @hydra.main()
---config-name,-cn : Overrides the config_name specified in hydra.main()
---config-dir,-cd : Adds an additional config dir to the config search path
---info,-i : Print Hydra information
-Overrides : Any key=value arguments to override config values (use dots for.nested=overrides)
-""",
+                    Zsh - Install:
+                    Zsh is compatible with the Bash shell completion, see the [documentation]\
+(https://hydra.cc/docs/next/tutorials/basic/running_your_app/tab_completion#zsh-instructions) \
+for details.
+                    eval "$(python {script} -sc install=bash)"
+                    Zsh - Uninstall:
+                    eval "$(python {script} -sc uninstall=bash)"
+
+                --config-path,-cp : Overrides the config_path specified in hydra.main().
+                                    The config_path is relative to the Python file declaring @hydra.main()
+                --config-name,-cn : Overrides the config_name specified in hydra.main()
+                --config-dir,-cd : Adds an additional config dir to the config search path
+                --info,-i : Print Hydra information [all|defaults|defaults-tree|config|plugins]
+                Overrides : Any key=value arguments to override config values (use dots for.nested=overrides)
+                """
+            ),
             id="overriding_hydra_help_template:$FLAGS_HELP",
         ),
     ],
@@ -657,12 +647,11 @@ def test_help(
     cmd = [script, "hydra.run.dir=" + str(tmpdir)]
     cmd.extend(overrides)
     cmd.append(flag)
-    result, _err = get_run_output(cmd)
-    # normalize newlines on Windows to make testing easier
-    assert result == normalize_newlines(expected.format(script=script)).rstrip()
+    result, _err = run_python_script(cmd)
+    assert_text_same(result, expected.format(script=script))
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
         ("tests/test_apps/interpolating_dir_hydra_to_app/my_app.py", None),
@@ -698,7 +687,7 @@ def test_sys_exit(tmpdir: Path) -> None:
     assert subprocess.run(cmd).returncode == 42
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "task_config, overrides, expected_dir",
     [
         ({"hydra": {"run": {"dir": "foo"}}}, [], "foo"),
@@ -737,6 +726,24 @@ def test_local_run_workdir(
     )
 
 
+@mark.parametrize(
+    "task_config",
+    [
+        ({"hydra": {"run": {"dir": "${now:%Y%m%d_%H%M%S_%f}"}}}),
+    ],
+)
+def test_run_dir_microseconds(tmpdir: Path, task_config: DictConfig) -> None:
+    cfg = OmegaConf.create(task_config)
+    assert isinstance(cfg, DictConfig)
+    integration_test(
+        tmpdir=tmpdir,
+        task_config=cfg,
+        overrides=[],
+        prints="str('%f' not in os.getcwd())",
+        expected_outputs="True",
+    )
+
+
 def test_hydra_env_set_with_config(tmpdir: Path) -> None:
     cfg = OmegaConf.create({"hydra": {"job": {"env_set": {"foo": "bar"}}}})
     integration_test(
@@ -752,37 +759,44 @@ def test_hydra_env_set_with_override(tmpdir: Path) -> None:
     integration_test(
         tmpdir=tmpdir,
         task_config={},
-        overrides=["+hydra.job.env_set.foo=bar"],
+        overrides=["hydra.job.env_set.foo=bar"],
         prints="os.environ['foo']",
         expected_outputs="bar",
     )
 
 
-@pytest.mark.parametrize(  # type: ignore
-    "override", [pytest.param("xyz", id="db=xyz"), pytest.param("", id="db=")]
+@mark.parametrize(
+    "override",
+    [
+        param("xyz", id="db=xyz"),
+        param("", id="db="),
+    ],
 )
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
-        pytest.param("hydra/test_utils/example_app.py", None, id="file"),
-        pytest.param(None, "hydra.test_utils.example_app", id="module"),
+        param("hydra/test_utils/example_app.py", None, id="file"),
+        param(None, "hydra.test_utils.example_app", id="module"),
     ],
 )
 def test_override_with_invalid_group_choice(
     hydra_restore_singletons: Any,
     hydra_task_runner: TTaskRunner,
-    calling_file: str,
-    calling_module: str,
+    calling_file: Optional[str],
+    calling_module: Optional[str],
     override: str,
 ) -> None:
-    msg = (
-        f"Could not load db/{override}."
-        f"\nAvailable options:"
-        f"\n\tmysql"
-        f"\n\tpostgresql"
+    msg = dedent(
+        f"""\
+    In 'db_conf': Could not find 'db/{override}'
+
+    Available options in 'db':
+    \tmysql
+    \tpostgresql
+    """
     )
 
-    with pytest.raises(MissingConfigException, match=re.escape(msg)):
+    with raises(MissingConfigException) as e:
         with hydra_task_runner(
             calling_file=calling_file,
             calling_module=calling_module,
@@ -790,11 +804,14 @@ def test_override_with_invalid_group_choice(
             config_name="db_conf",
             overrides=[f"db={override}"],
         ):
-            ...
+            pass
+
+    # assert_text_same(from_line=msg, to_line=str(e.value))
+    assert re.search(msg, str(e.value)) is not None
 
 
-@pytest.mark.parametrize("config_path", ["dir1", "dir2"])  # type: ignore
-@pytest.mark.parametrize("config_name", ["cfg1", "cfg2"])  # type: ignore
+@mark.parametrize("config_path", ["dir1", "dir2"])
+@mark.parametrize("config_name", ["cfg1", "cfg2"])
 def test_config_name_and_path_overrides(
     tmpdir: Path, config_path: str, config_name: str
 ) -> None:
@@ -805,13 +822,13 @@ def test_config_name_and_path_overrides(
         f"--config-path={config_path}",
     ]
     print(" ".join(cmd))
-    result, _err = get_run_output(cmd)
+    result, _err = run_python_script(cmd)
     # normalize newlines on Windows to make testing easier
     result = result.replace("\r\n", "\n")
     assert result == f"{config_path}_{config_name}: true"
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "overrides, expected_files",
     [
         ([], {".hydra"}),
@@ -819,7 +836,7 @@ def test_config_name_and_path_overrides(
         (["hydra.output_subdir=null"], set()),
     ],
 )
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "calling_file, calling_module",
     [
         ("tests/test_apps/app_with_cfg/my_app.py", None),
@@ -847,7 +864,7 @@ def test_hydra_output_dir(
         assert files == expected_files
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "directory,file,module, error",
     [
         (
@@ -875,15 +892,15 @@ def test_module_run(
         ret = run_with_error(cmd, modified_env)
         assert re.search(re.escape(error), ret) is not None
     else:
-        result, _err = get_run_output(cmd, env=modified_env)
+        result, _err = run_python_script(cmd, env=modified_env)
         assert OmegaConf.create(result) == {"x": 10}
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "overrides,error,expected",
     [
-        pytest.param(["test.param=1"], False, "1", id="run:value"),
-        pytest.param(
+        param(["test.param=1"], False, "1", id="run:value"),
+        param(
             ["test.param=1,2"],
             True,
             dedent(
@@ -897,25 +914,22 @@ def test_module_run(
             ),
             id="run:choice_sweep",
         ),
-        pytest.param(
+        param(
             ["test.param=[1,2]"],
             True,
             dedent(
                 """\
                 Error merging override test.param=[1,2]
                 Value '[1, 2]' could not be converted to Integer
-                \tfull_key: test.param
-                \treference_type=Optional[TestConfig]
-                \tobject_type=TestConfig
+                    full_key: test.param
+                    object_type=TestConfig
 
                 Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace."""
             ),
             id="run:list_value",
         ),
-        pytest.param(["test.param=1", "-m"], False, "1", id="multirun:value"),
-        pytest.param(
-            ["test.param=1,2", "-m"], False, "1\n2", id="multirun:choice_sweep"
-        ),
+        param(["test.param=1", "-m"], False, "1", id="multirun:value"),
+        param(["test.param=1,2", "-m"], False, "1\n2", id="multirun:choice_sweep"),
     ],
 )
 def test_multirun_structured_conflict(
@@ -928,20 +942,29 @@ def test_multirun_structured_conflict(
     cmd.extend(overrides)
     if error:
         expected = normalize_newlines(expected)
-        ret = normalize_newlines(run_with_error(cmd))
-        assert re.search(re.escape(expected), ret) is not None
+        ret = run_with_error(cmd)
+        assert_regex_match(
+            from_line=expected,
+            to_line=ret,
+            from_name="Expected output",
+            to_name="Actual output",
+        )
     else:
-        ret, _err = get_run_output(cmd)
+        ret, _err = run_python_script(cmd)
         assert ret == expected
 
 
-@pytest.mark.parametrize(
+@mark.parametrize(
     "cmd_base",
     [(["tests/test_apps/simple_app/my_app.py", "hydra/hydra_logging=disabled"])],
 )
 class TestVariousRuns:
-    @pytest.mark.parametrize(  # type: ignore
-        "sweep", [pytest.param(False, id="run"), pytest.param(True, id="sweep")]
+    @mark.parametrize(
+        "sweep",
+        [
+            param(False, id="run"),
+            param(True, id="sweep"),
+        ],
     )
     def test_run_with_missing_default(
         self, cmd_base: List[str], tmpdir: Any, sweep: bool
@@ -975,7 +998,7 @@ bar: 10
 
 foo: 20
 bar: 20"""
-        ret, _err = get_run_output(cmd)
+        ret, _err = run_python_script(cmd)
         assert normalize_newlines(ret) == normalize_newlines(expected)
 
     def test_multirun_config_overrides_evaluated_lazily(
@@ -992,7 +1015,7 @@ bar: 10
 
 foo: 20
 bar: 20"""
-        ret, _err = get_run_output(cmd)
+        ret, _err = run_python_script(cmd)
         assert normalize_newlines(ret) == normalize_newlines(expected)
 
     def test_multirun_defaults_override(self, cmd_base: List[str], tmpdir: Any) -> None:
@@ -1008,7 +1031,7 @@ bar: 100
 
 foo: 20
 bar: 100"""
-        ret, _err = get_run_output(cmd)
+        ret, _err = run_python_script(cmd)
         assert normalize_newlines(ret) == normalize_newlines(expected)
 
     def test_run_pass_list(self, cmd_base: List[str], tmpdir: Any) -> None:
@@ -1017,7 +1040,7 @@ bar: 100"""
             "+foo=[1,2,3]",
         ]
         expected = {"foo": [1, 2, 3]}
-        ret, _err = get_run_output(cmd)
+        ret, _err = run_python_script(cmd)
         assert OmegaConf.create(ret) == OmegaConf.create(expected)
 
 
@@ -1027,20 +1050,27 @@ def test_app_with_error_exception_sanitized(tmpdir: Any, monkeypatch: Any) -> No
         "my_app.py",
         "hydra.sweep.dir=" + str(tmpdir),
     ]
-    expected = """Traceback (most recent call last):
-  File "my_app.py", line 13, in my_app
-    foo(cfg)
-  File "my_app.py", line 8, in foo
-    cfg.foo = "bar"  # does not exist in the config
-omegaconf.errors.ConfigAttributeError: Key 'foo' is not in struct
-\tfull_key: foo
-\treference_type=Optional[Dict[Union[str, Enum], Any]]
-\tobject_type=dict
+    expected = dedent(
+        """\
+        Traceback (most recent call last):
+          File ".*my_app.py", line 13, in my_app
+            foo(cfg)
+          File ".*my_app.py", line 8, in foo
+            cfg.foo = "bar"  # does not exist in the config
+        omegaconf.errors.ConfigAttributeError: Key 'foo' is not in struct
+            full_key: foo
+            object_type=dict
 
-Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace."""
+        Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace."""
+    )
 
     ret = run_with_error(cmd)
-    assert normalize_newlines(expected) == normalize_newlines(ret)
+    assert_regex_match(
+        from_line=expected,
+        to_line=ret,
+        from_name="Expected output",
+        to_name="Actual output",
+    )
 
 
 def test_hydra_to_job_config_interpolation(tmpdir: Any) -> Any:
@@ -1051,17 +1081,17 @@ def test_hydra_to_job_config_interpolation(tmpdir: Any) -> Any:
         "a=foo",
     ]
     expected = "override_a=foo,b=foo"
-    result, _err = get_run_output(cmd)
+    result, _err = run_python_script(cmd)
     assert result == expected.strip()
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "overrides,expected",
     [
-        pytest.param(
+        param(
             ["dataset=imagenet"], {"dataset": {"name": "imagenet"}}, id="no_conf_dir"
         ),
-        pytest.param(
+        param(
             ["dataset=cifar10", "--config-dir=user-dir"],
             {"dataset": {"name": "cifar10"}},
             id="no_conf_dir",
@@ -1077,7 +1107,7 @@ def test_config_dir_argument(
         "hydra.run.dir=" + str(tmpdir),
     ]
     cmd.extend(overrides)
-    result, _err = get_run_output(cmd)
+    result, _err = run_python_script(cmd)
     assert OmegaConf.create(result) == expected
 
 
@@ -1087,7 +1117,7 @@ def test_schema_overrides_hydra(monkeypatch: Any, tmpdir: Path) -> None:
         "my_app.py",
         "hydra.run.dir=" + str(tmpdir),
     ]
-    result, _err = get_run_output(cmd)
+    result, _err = run_python_script(cmd)
     assert result == "job_name: test, name: James Bond, age: 7, group: a"
 
 
@@ -1097,7 +1127,7 @@ def test_defaults_pkg_with_dot(monkeypatch: Any, tmpdir: Path) -> None:
         "my_app.py",
         "hydra.run.dir=" + str(tmpdir),
     ]
-    result, _err = get_run_output(cmd)
+    result, _err = run_python_script(cmd)
     assert OmegaConf.create(result) == {
         "dataset": {"test": {"name": "imagenet", "path": "/datasets/imagenet"}}
     }
@@ -1121,14 +1151,14 @@ class TestTaskRunnerLogging:
         logger.info("test_2")
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "expected",
     [
         (
             dedent(
                 """\
                 Traceback (most recent call last):
-                  File "my_app.py", line 9, in my_app
+                  File ".*my_app.py", line 9, in my_app
                     1 / 0
                 ZeroDivisionError: division by zero
 
@@ -1138,13 +1168,48 @@ class TestTaskRunnerLogging:
         ),
     ],
 )
-def test_hydra_exception(monkeypatch: Any, tmpdir: Any, expected: str) -> None:
+def test_hydra_exception(
+    monkeypatch: Any,
+    tmpdir: Any,
+    expected: str,
+) -> None:
     monkeypatch.chdir("tests/test_apps/app_exception")
     ret = run_with_error(["my_app.py", f"hydra.run.dir={tmpdir}"])
-
-    assert_text_same(
+    assert_regex_match(
         from_line=expected,
         to_line=ret,
         from_name="Expected output",
         to_name="Actual output",
+    )
+
+
+def test_structured_with_none_list(monkeypatch: Any, tmpdir: Path) -> None:
+    monkeypatch.chdir("tests/test_apps/structured_with_none_list")
+    cmd = [
+        "my_app.py",
+        "hydra.run.dir=" + str(tmpdir),
+    ]
+    result, _err = run_python_script(cmd)
+    assert result == "{'list': None}"
+
+
+def test_self_hydra_config_interpolation_integration(tmpdir: Path) -> None:
+    cfg = OmegaConf.create()
+    integration_test(
+        tmpdir=tmpdir,
+        task_config=cfg,
+        overrides=[],
+        prints="HydraConfig.get().job_logging.handlers.file.filename",
+        expected_outputs="task.log",
+    )
+
+
+def test_job_id_and_num_in_sweep(tmpdir: Path) -> None:
+    cfg = OmegaConf.create()
+    integration_test(
+        tmpdir=tmpdir,
+        task_config=cfg,
+        overrides=["-m"],
+        prints=["HydraConfig.get().job.id", "str(HydraConfig.get().job.num)"],
+        expected_outputs=["0", "0"],
     )

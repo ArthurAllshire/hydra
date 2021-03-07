@@ -21,6 +21,7 @@ from hydra.plugins.plugin import Plugin
 from hydra.plugins.search_path_plugin import SearchPathPlugin
 from hydra.plugins.sweeper import Sweeper
 from hydra.types import TaskFunction
+from hydra.utils import instantiate
 
 
 @dataclass
@@ -86,7 +87,7 @@ class Plugins(metaclass=Singleton):
             if classname not in self.class_name_to_class.keys():
                 raise RuntimeError(f"Unknown plugin class : '{classname}'")
             clazz = self.class_name_to_class[classname]
-            plugin = internal_utils._instantiate_class(clazz=clazz, config=config)
+            plugin = instantiate(config=config, _target_=clazz)
             assert isinstance(plugin, Plugin)
 
         except ImportError as e:
@@ -175,7 +176,7 @@ class Plugins(metaclass=Singleton):
                         )
                         for w in recorded_warnings:
                             warnings.showwarning(
-                                message=w.message,  # type: ignore
+                                message=w.message,
                                 category=w.category,
                                 filename=w.filename,
                                 lineno=w.lineno,

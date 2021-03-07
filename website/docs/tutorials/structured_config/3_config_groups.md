@@ -2,7 +2,10 @@
 id: config_groups
 title: Config Groups
 ---
-[![Example](https://img.shields.io/badge/-Example-informational)](https://github.com/facebookresearch/hydra/tree/master/examples/tutorials/structured_configs/3_config_groups/)
+
+import {ExampleGithubLink} from "@site/src/components/GithubLink"
+
+<ExampleGithubLink to="examples/tutorials/structured_configs/3_config_groups/my_app.py"/>
 
 Structured Configs can be used to implement config groups. Special care needs to be taken when specifying a 
 default value for fields populated by a config group. We will look at why below.
@@ -23,8 +26,8 @@ class PostGreSQLConfig:
 
 @dataclass
 class Config:
-    # Keep db omegaconf.MISSING. We will populate it using composition.
-    db: Any = MISSING
+    # We will populate db using composition.
+    db: Any
 
 # Create config group `db` with options 'mysql' and 'postgreqsl'
 cs = ConfigStore.instance()
@@ -37,7 +40,7 @@ def my_app(cfg: Config) -> None:
     print(OmegaConf.to_yaml(cfg))
 ```
 
-:::info
+:::caution
 The *Config* class is **NOT** the Defaults list. We will see the Defaults list in the next page.
 :::
 
@@ -50,16 +53,21 @@ db:
   password: drowssap
   port: 5432
   timeout: 10
-  user: postgre_user
+  user: postgres_user
 ```
 
 The `+` above is required because there is no default choice for the config group `db`.
 The next page will reintroduce the Defaults List, eliminating the need for the `+`.
 
 ### Config inheritance
+
+<ExampleGithubLink to="examples/tutorials/structured_configs/3_config_groups/my_app_with_inheritance.py"/>
+
 Standard Python inheritance can be used to get improved type safety, and to move common fields to the parent class.
 
 ```python title="Defining a config group for database using inheritance"
+from omegaconf import MISSING
+
 @dataclass
 class DBConfig:
     host: str = "localhost"
@@ -81,5 +89,16 @@ class PostGreSQLConfig(DBConfig):
 class Config:
     # We can now annotate db as DBConfig which
     # improves both static and dynamic type safety.
-    db: DBConfig = MISSING
+    db: DBConfig
 ```
+
+### Missing fields
+Assign *MISSING* to a field to indicates that it does not have a default value. This is equivalent to
+the `???` literal we have seen in OmegaConf configs before.
+
+Omitting a default value is equivalent to assigning *MISSING* to it, although it is sometimes 
+convenient to be able to assign MISSING it to a field.
+
+:::caution
+Do not confuse **omegaconf.MISSING** with **dataclass.MISSING**.
+:::

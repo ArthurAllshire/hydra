@@ -1,5 +1,4 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-from copy import copy
 from typing import Any, Dict, List, Optional
 
 from hydra.core.object_type import ObjectType
@@ -18,17 +17,17 @@ class ConfigSourceExample(ConfigSource):
             "package_test/name.yaml": {"package": "_name_"},
             "package_test/none.yaml": {},
             "primary_config_with_non_global_package.yaml": {"package": "foo"},
+            "configs_with_defaults_list.yaml": {"package": "_global_"},
+            "configs_with_defaults_list/global_package.yaml": {"package": "_global_"},
+            "configs_with_defaults_list/group_package.yaml": {"package": "_group_"},
         }
         self.configs: Dict[str, Dict[str, Any]] = {
             "primary_config.yaml": {"primary": True},
             "primary_config_with_non_global_package.yaml": {"primary": True},
             "config_without_group.yaml": {"group": False},
-            "dataset/imagenet.yaml": {
-                "dataset": {"name": "imagenet", "path": "/datasets/imagenet"}
-            },
-            "dataset/cifar10.yaml": {
-                "dataset": {"name": "cifar10", "path": "/datasets/cifar10"}
-            },
+            "config_with_unicode.yaml": {"group": "数据库"},
+            "dataset/imagenet.yaml": {"name": "imagenet", "path": "/datasets/imagenet"},
+            "dataset/cifar10.yaml": {"name": "cifar10", "path": "/datasets/cifar10"},
             "level1/level2/nested1.yaml": {"l1_l2_n1": True},
             "level1/level2/nested2.yaml": {"l1_l2_n2": True},
             "package_test/explicit.yaml": {"foo": "bar"},
@@ -37,6 +36,18 @@ class ConfigSourceExample(ConfigSource):
             "package_test/group_name.yaml": {"foo": "bar"},
             "package_test/name.yaml": {"foo": "bar"},
             "package_test/none.yaml": {"foo": "bar"},
+            "config_with_defaults_list.yaml": {
+                "defaults": [{"dataset": "imagenet"}],
+                "key": "value",
+            },
+            "configs_with_defaults_list/global_package.yaml": {
+                "defaults": [{"foo": "bar"}],
+                "x": 10,
+            },
+            "configs_with_defaults_list/group_package.yaml": {
+                "defaults": [{"foo": "bar"}],
+                "x": 10,
+            },
         }
 
     @staticmethod
@@ -44,30 +55,24 @@ class ConfigSourceExample(ConfigSource):
         return "example"
 
     def load_config(
-        self,
-        config_path: str,
-        is_primary_config: bool,
-        package_override: Optional[str] = None,
+        self, config_path: str, package_override: Optional[str] = None
     ) -> ConfigResult:
-        config_path = self._normalize_file_name(config_path)
-        if config_path not in self.configs:
-            raise ConfigLoadError("Config not found : " + config_path)
-        header = copy(self.headers[config_path]) if config_path in self.headers else {}
-        if "package" not in header:
-            header["package"] = ""
+        name = self._normalize_file_name(config_path)
 
-        self._update_package_in_header(
-            header,
-            config_path,
-            is_primary_config=is_primary_config,
-            package_override=package_override,
-        )
-        cfg = OmegaConf.create(self.configs[config_path])
+        if name not in self.configs:
+            raise ConfigLoadError("Config not found : " + config_path)
+
+        res_header: Dict[str, Optional[str]] = {"package": None}
+        if name in self.headers:
+            header = self.headers[name]
+            res_header["package"] = header["package"] if "package" in header else None
+
+        cfg = OmegaConf.create(self.configs[name])
         return ConfigResult(
-            config=self._embed_config(cfg, header["package"]),
+            config=cfg,
             path=f"{self.scheme()}://{self.path}",
             provider=self.provider,
-            header=header,
+            header=res_header,
         )
 
     def available(self) -> bool:
@@ -77,7 +82,14 @@ class ConfigSourceExample(ConfigSource):
         return self.path == "valid_path"
 
     def is_group(self, config_path: str) -> bool:
-        groups = {"", "dataset", "optimizer", "level1", "level1/level2"}
+        groups = {
+            "",
+            "dataset",
+            "optimizer",
+            "level1",
+            "level1/level2",
+            "configs_with_defaults_list",
+        }
         return config_path in groups
 
     def is_config(self, config_path: str) -> bool:
@@ -86,6 +98,8 @@ class ConfigSourceExample(ConfigSource):
             "dataset/imagenet",
             "level1/level2/nested1",
             "level1/level2/nested2",
+            "configs_with_defaults_list/global_package",
+            "configs_with_defaults_list/group_package",
         }
         configs = set([x for x in base] + [f"{x}.yaml" for x in base])
         return config_path in configs
@@ -105,6 +119,7 @@ class ConfigSourceExample(ConfigSource):
             "optimizer": ["adam", "nesterov"],
             "level1": [],
             "level1/level2": ["nested1", "nested2"],
+            "configs_with_defaults_list": ["global_package", "group_package"],
         }
         if results_filter is None:
             return sorted(set(groups[config_path] + configs[config_path]))

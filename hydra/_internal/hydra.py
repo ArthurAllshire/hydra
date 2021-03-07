@@ -1,20 +1,17 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import copy
 import logging
-import os
 import string
 import sys
-import warnings
 from argparse import ArgumentParser
 from collections import defaultdict
-from typing import Any, Callable, DefaultDict, List, Optional, Sequence, Type
+from typing import Any, Callable, DefaultDict, List, Optional, Sequence, Type, Union
 
 from omegaconf import Container, DictConfig, OmegaConf, open_dict
 
 from hydra._internal.utils import get_column_widths, run_and_report
 from hydra.core.config_loader import ConfigLoader
 from hydra.core.config_search_path import ConfigSearchPath
-from hydra.core.hydra_config import HydraConfig
 from hydra.core.plugins import Plugins
 from hydra.core.utils import (
     JobReturn,
@@ -31,6 +28,7 @@ from hydra.plugins.search_path_plugin import SearchPathPlugin
 from hydra.plugins.sweeper import Sweeper
 from hydra.types import RunMode, TaskFunction
 
+from ..core.default_element import DefaultsTreeNode, InputDefault
 from .config_loader_impl import ConfigLoaderImpl
 from .utils import create_automatic_config_search_path
 
@@ -45,33 +43,21 @@ class Hydra:
         calling_module: Optional[str],
         config_path: Optional[str],
         job_name: str,
-        strict: Optional[bool],
     ) -> "Hydra":
         config_search_path = create_automatic_config_search_path(
             calling_file, calling_module, config_path
         )
 
-        return Hydra.create_main_hydra2(job_name, config_search_path, strict)
+        return Hydra.create_main_hydra2(job_name, config_search_path)
 
     @classmethod
     def create_main_hydra2(
         cls,
         task_name: str,
         config_search_path: ConfigSearchPath,
-        strict: Optional[bool],
     ) -> "Hydra":
-
-        if strict is None:
-            strict = True
-        else:
-            msg = (
-                "\n@hydra.main(strict) flag is deprecated and will removed in the next version."
-                "\nSee https://hydra.cc/docs/next/upgrades/0.11_to_1.0/strict_mode_flag_deprecated"
-            )
-            warnings.warn(message=msg, category=UserWarning)
-
         config_loader: ConfigLoader = ConfigLoaderImpl(
-            config_search_path=config_search_path, default_strict=strict
+            config_search_path=config_search_path
         )
 
         hydra = cls(task_name=task_name, config_loader=config_loader)
@@ -103,7 +89,7 @@ class Hydra:
             with_log_configuration=with_log_configuration,
             run_mode=RunMode.RUN,
         )
-        HydraConfig.instance().set_config(cfg)
+
         return run_job(
             config=cfg,
             task_function=task_function,
@@ -119,15 +105,13 @@ class Hydra:
         overrides: List[str],
         with_log_configuration: bool = True,
     ) -> Any:
-        # Initial config is loaded without strict (individual job configs may have strict).
         cfg = self.compose_config(
             config_name=config_name,
             overrides=overrides,
-            strict=False,
             with_log_configuration=with_log_configuration,
             run_mode=RunMode.MULTIRUN,
         )
-        HydraConfig.instance().set_config(cfg)
+
         sweeper = Plugins.instance().instantiate_sweeper(
             config=cfg, config_loader=self.config_loader, task_function=task_function
         )
@@ -181,23 +165,20 @@ class Hydra:
             cfg_type=cfg_type,
             with_log_configuration=False,
         )
+        if package == "_global_":
+            package = None
         if package is not None:
-            if package == "_global_":
-                package = ""
             ret = OmegaConf.select(cfg, package)
             if ret is None:
                 sys.stderr.write(f"package '{package}' not found in config\n")
                 sys.exit(1)
             else:
                 if isinstance(ret, Container):
-                    if package == "":
-                        package = "_global_"
                     print(f"# @package {package}")
                     sys.stdout.write(OmegaConf.to_yaml(ret))
                 else:
                     print(ret)
         else:
-            print("# @package _global_")
             sys.stdout.write(OmegaConf.to_yaml(cfg))
 
     @staticmethod
@@ -222,7 +203,7 @@ class Hydra:
     ) -> None:
         subcommands = ["install", "uninstall", "query"]
         arguments = OmegaConf.from_dotlist(overrides)
-        num_commands = sum(1 for key in subcommands if arguments[key] is not None)
+        num_commands = sum(1 for key in subcommands if key in arguments)
         if num_commands != 1:
             raise ValueError(f"Expecting one subcommand from {subcommands} to be set")
 
@@ -236,13 +217,13 @@ class Hydra:
                 )
             return shell_to_plugin[cmd][0]
 
-        if arguments.install is not None:
+        if "install" in arguments:
             plugin = find_plugin(arguments.install)
             plugin.install()
-        elif arguments.uninstall is not None:
+        elif "uninstall" in arguments:
             plugin = find_plugin(arguments.uninstall)
             plugin.uninstall()
-        elif arguments.query is not None:
+        elif "query" in arguments:
             plugin = find_plugin(arguments.query)
             plugin.query(config_name=config_name)
 
@@ -296,14 +277,17 @@ class Hydra:
         self, help_cfg: DictConfig, cfg: DictConfig, args_parser: ArgumentParser
     ) -> str:
         s = string.Template(help_cfg.template)
+
+        def is_hydra_group(x: str) -> bool:
+            return x.startswith("hydra/") or x == "hydra"
+
+        def is_not_hydra_group(x: str) -> bool:
+            return not is_hydra_group(x)
+
         help_text = s.substitute(
             FLAGS_HELP=self.format_args_help(args_parser),
-            HYDRA_CONFIG_GROUPS=self.format_config_groups(
-                lambda x: x.startswith("hydra/")
-            ),
-            APP_CONFIG_GROUPS=self.format_config_groups(
-                lambda x: not x.startswith("hydra/")
-            ),
+            HYDRA_CONFIG_GROUPS=self.format_config_groups(is_hydra_group),
+            APP_CONFIG_GROUPS=self.format_config_groups(is_not_hydra_group),
             CONFIG=OmegaConf.to_yaml(cfg, resolve=False),
         )
         return help_text
@@ -312,7 +296,7 @@ class Hydra:
         self, config_name: Optional[str], args_parser: ArgumentParser, args: Any
     ) -> None:
         cfg = self.compose_config(
-            config_name=config_name,
+            config_name=None,
             overrides=args.overrides,
             run_mode=RunMode.RUN,
             with_log_configuration=True,
@@ -366,7 +350,8 @@ class Hydra:
                 Hydra._log_header(header=f"{plugin_type.__name__}:", prefix="\t")
                 for plugin in plugins:
                     log.debug("\t\t{}".format(plugin.__name__))
-                    all_plugins.remove(plugin.__name__)
+                    if plugin.__name__ in all_plugins:
+                        all_plugins.remove(plugin.__name__)
 
         if len(all_plugins) > 0:
             Hydra._log_header(header="Generic plugins: ", prefix="\t")
@@ -396,46 +381,6 @@ class Hydra:
                     source.full_path().ljust(search_path_pad),
                 )
             )
-        self._log_footer(header=header, filler="-")
-
-    def _print_composition_trace(self) -> None:
-        # Print configurations used to compose the config object
-        assert log is not None
-        log.debug("")
-        self._log_header("Composition trace", filler="*")
-        box: List[List[str]] = [
-            ["Config name", "Search path", "Provider", "Schema provider"]
-        ]
-        for trace in self.config_loader.get_load_history():
-            box.append(
-                [
-                    trace.filename,
-                    trace.path if trace.path is not None else "",
-                    trace.provider if trace.provider is not None else "",
-                    trace.schema_provider if trace.schema_provider is not None else "",
-                ]
-            )
-        padding = get_column_widths(box)
-        del box[0]
-
-        header = "| {} | {} | {} | {} |".format(
-            "Config name".ljust(padding[0]),
-            "Search path".ljust(padding[1]),
-            "Provider".ljust(padding[2]),
-            "Schema provider".ljust(padding[3]),
-        )
-        self._log_header(header=header, filler="-")
-
-        for row in box:
-            log.debug(
-                "| {} | {} | {} | {} |".format(
-                    row[0].ljust(padding[0]),
-                    row[1].ljust(padding[1]),
-                    row[2].ljust(padding[2]),
-                    row[3].ljust(padding[3]),
-                )
-            )
-
         self._log_footer(header=header, filler="-")
 
     def _print_plugins_profiling_info(self, top_n: int) -> None:
@@ -474,20 +419,92 @@ class Hydra:
 
         self._log_footer(header=header, filler="-")
 
-    def _print_debug_info(self) -> None:
+    def _print_config_info(
+        self, config_name: Optional[str], overrides: List[str]
+    ) -> None:
+        assert log is not None
+        self._print_search_path()
+        self._print_defaults_tree(config_name=config_name, overrides=overrides)
+        self._print_defaults_list(config_name=config_name, overrides=overrides)
+
+        cfg = run_and_report(
+            lambda: self._get_cfg(
+                config_name=config_name,
+                overrides=overrides,
+                cfg_type="all",
+                with_log_configuration=False,
+            )
+        )
+        self._log_header(header="Config", filler="*")
+        with open_dict(cfg):
+            del cfg["hydra"]
+        log.info(OmegaConf.to_yaml(cfg))
+
+    def _print_defaults_list(
+        self, config_name: Optional[str], overrides: List[str]
+    ) -> None:
+        assert log is not None
+        defaults = self.config_loader.compute_defaults_list(
+            config_name=config_name,
+            overrides=overrides,
+            run_mode=RunMode.RUN,
+        )
+
+        box: List[List[str]] = [
+            [
+                "Config path",
+                "Package",
+                "_self_",
+                "Parent",
+            ]
+        ]
+        for d in defaults.defaults:
+            row = [
+                d.config_path,
+                d.package,
+                "True" if d.is_self else "False",
+                d.parent,
+            ]
+            row = [x if x is not None else "" for x in row]
+            box.append(row)
+        padding = get_column_widths(box)
+        del box[0]
+        log.debug("")
+        self._log_header("Defaults List", filler="*")
+        header = "| {} | {} | {} | {} | ".format(
+            "Config path".ljust(padding[0]),
+            "Package".ljust(padding[1]),
+            "_self_".ljust(padding[2]),
+            "Parent".ljust(padding[3]),
+        )
+        self._log_header(header=header, filler="-")
+
+        for row in box:
+            log.debug(
+                "| {} | {} | {} | {} |".format(
+                    row[0].ljust(padding[0]),
+                    row[1].ljust(padding[1]),
+                    row[2].ljust(padding[2]),
+                    row[3].ljust(padding[3]),
+                )
+            )
+
+        self._log_footer(header=header, filler="-")
+
+    def _print_debug_info(
+        self,
+        config_name: Optional[str],
+        overrides: List[str],
+    ) -> None:
         assert log is not None
         if log.isEnabledFor(logging.DEBUG):
-            self._print_plugins()
-            self._print_search_path()
-            self._print_composition_trace()
-            self._print_plugins_profiling_info(10)
+            self._print_all_info(config_name, overrides)
 
     def compose_config(
         self,
         config_name: Optional[str],
         overrides: List[str],
         run_mode: RunMode,
-        strict: Optional[bool] = None,
         with_log_configuration: bool = False,
         from_shell: bool = True,
     ) -> DictConfig:
@@ -496,54 +513,98 @@ class Hydra:
         :param overrides:
         :param run_mode: compose config for run or for multirun?
         :param with_log_configuration: True to configure logging subsystem from the loaded config
-        :param strict: None for default behavior (default to true for config file, false if no config file).
-                       otherwise forces specific behavior.
         :param from_shell: True if the parameters are passed from the shell. used for more helpful error messages
         :return:
         """
 
-        self.config_loader.ensure_main_config_source_available()
-
         cfg = self.config_loader.load_configuration(
             config_name=config_name,
             overrides=overrides,
-            strict=strict,
             run_mode=run_mode,
             from_shell=from_shell,
         )
-        with open_dict(cfg):
-            from hydra import __version__
-
-            cfg.hydra.runtime.version = __version__
-            cfg.hydra.runtime.cwd = os.getcwd()
         if with_log_configuration:
             configure_log(cfg.hydra.hydra_logging, cfg.hydra.verbose)
             global log
             log = logging.getLogger(__name__)
-            self._print_debug_info()
+            self._print_debug_info(config_name, overrides)
         return cfg
 
-    def show_info(self, config_name: Optional[str], overrides: List[str]) -> None:
+    def _print_plugins_info(
+        self, config_name: Optional[str], overrides: List[str]
+    ) -> None:
+        self._print_plugins()
+        self._print_plugins_profiling_info(top_n=10)
+
+    def _print_all_info(self, config_name: Optional[str], overrides: List[str]) -> None:
         from .. import __version__
 
+        self._log_header(f"Hydra {__version__}", filler="=")
+        self._print_plugins()
+        self._print_config_info(config_name, overrides)
+
+    def _print_defaults_tree_impl(
+        self,
+        tree: Union[DefaultsTreeNode, InputDefault],
+        indent: int = 0,
+    ) -> None:
+        assert log is not None
+        from ..core.default_element import GroupDefault, InputDefault, VirtualRoot
+
+        def to_str(node: InputDefault) -> str:
+            if isinstance(node, VirtualRoot):
+                return node.get_config_path()
+            elif isinstance(node, GroupDefault):
+                name = node.get_name()
+                if name is None:
+                    name = "null"
+                return node.get_override_key() + ": " + name
+            else:
+                return node.get_config_path()
+
+        pad = "  " * indent
+
+        if isinstance(tree, DefaultsTreeNode):
+            node_str = to_str(tree.node)
+            if tree.children is not None and len(tree.children) > 0:
+                log.info(pad + node_str + ":")
+                for child in tree.children:
+                    self._print_defaults_tree_impl(tree=child, indent=indent + 1)
+            else:
+                log.info(pad + node_str)
+        else:
+            assert isinstance(tree, InputDefault)
+            log.info(pad + to_str(tree))
+
+    def _print_defaults_tree(
+        self, config_name: Optional[str], overrides: List[str]
+    ) -> None:
+        assert log is not None
+        defaults = self.config_loader.compute_defaults_list(
+            config_name=config_name,
+            overrides=overrides,
+            run_mode=RunMode.RUN,
+        )
+        log.info("")
+        self._log_header("Defaults Tree", filler="*")
+        self._print_defaults_tree_impl(defaults.defaults_tree)
+
+    def show_info(
+        self, info: str, config_name: Optional[str], overrides: List[str]
+    ) -> None:
+        options = {
+            "all": self._print_all_info,
+            "defaults": self._print_defaults_list,
+            "defaults-tree": self._print_defaults_tree,
+            "config": self._print_config_info,
+            "plugins": self._print_plugins_info,
+        }
         simple_stdout_log_config(level=logging.DEBUG)
         global log
         log = logging.getLogger(__name__)
-        self._log_header(f"Hydra {__version__}", filler="=")
-        self._print_plugins()
-        self._print_search_path()
-        self._print_plugins_profiling_info(top_n=10)
 
-        cfg = run_and_report(
-            lambda: self._get_cfg(
-                config_name=config_name,
-                overrides=overrides,
-                cfg_type="job",
-                with_log_configuration=False,
-            )
-        )
-        self._print_composition_trace()
-
-        log.debug("\n")
-        self._log_header(header="Config", filler="*")
-        print(OmegaConf.to_yaml(cfg))
+        if info not in options:
+            opts = sorted(options.keys())
+            log.error(f"Info usage: --info [{'|'.join(opts)}]")
+        else:
+            options[info](config_name=config_name, overrides=overrides)

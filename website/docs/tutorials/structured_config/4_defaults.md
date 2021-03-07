@@ -3,7 +3,9 @@ id: defaults
 title: Defaults List
 ---
 
-[![Example](https://img.shields.io/badge/-Example-informational)](https://github.com/facebookresearch/hydra/tree/master/examples/tutorials/structured_configs/4_defaults/)
+import {ExampleGithubLink} from "@site/src/components/GithubLink"
+
+<ExampleGithubLink to="examples/tutorials/structured_configs/4_defaults/my_app.py"/>
 
 You can define a defaults list in your primary Structured Config just like you can in your primary `config.yaml` file.
 The example below extends the previous example by adding a defaults list that will load `db=mysql` by default.
@@ -13,7 +15,7 @@ NOTE: You can still place your defaults list in your primary (YAML) config file 
 </div><br/>
 
 ```python {11-14,19,25}
-from omegaconf import MISSING, OmegaConf  # Do not confuse with dataclass.MISSING
+from omegaconf import MISSING, OmegaConf
 
 @dataclass
 class MySQLConfig:

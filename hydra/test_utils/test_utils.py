@@ -5,6 +5,7 @@ Utilities used by tests
 import copy
 import logging
 import os
+import re
 import shutil
 import string
 import subprocess
@@ -14,20 +15,20 @@ from contextlib import contextmanager
 from difflib import unified_diff
 from pathlib import Path
 from subprocess import PIPE, Popen
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 
 from omegaconf import Container, DictConfig, OmegaConf
-from typing_extensions import Protocol
 
 from hydra._internal.hydra import Hydra
 from hydra._internal.utils import detect_task_name
 from hydra.core.global_hydra import GlobalHydra
-from hydra.core.utils import JobReturn, split_config_path
+from hydra.core.utils import JobReturn, validate_config_path
 from hydra.types import TaskFunction
 
-# CircleCI does not have the environment variable USER, breaking the tests.
-
-os.environ["USER"] = "test_user"
+if sys.version_info >= (3, 8, 0):
+    from typing import Protocol
+else:
+    from typing_extensions import Protocol  # type: ignore
 
 
 @contextmanager
@@ -47,7 +48,6 @@ class TaskTestFunction:
         self.calling_module: Optional[str] = None
         self.config_path: Optional[str] = None
         self.config_name: Optional[str] = None
-        self.strict: Optional[bool] = None
         self.hydra: Optional[Hydra] = None
         self.job_ret: Optional[JobReturn] = None
         self.configure_logging: bool = False
@@ -61,25 +61,22 @@ class TaskTestFunction:
 
     def __enter__(self) -> "TaskTestFunction":
         try:
-            config_dir, config_name = split_config_path(
-                self.config_path, self.config_name
-            )
+            validate_config_path(self.config_path)
 
             job_name = detect_task_name(self.calling_file, self.calling_module)
 
             self.hydra = Hydra.create_main_hydra_file_or_module(
                 calling_file=self.calling_file,
                 calling_module=self.calling_module,
-                config_path=config_dir,
+                config_path=self.config_path,
                 job_name=job_name,
-                strict=self.strict,
             )
             self.temp_dir = tempfile.mkdtemp()
             overrides = copy.deepcopy(self.overrides)
             assert overrides is not None
             overrides.append(f"hydra.run.dir={self.temp_dir}")
             self.job_ret = self.hydra.run(
-                config_name=config_name,
+                config_name=self.config_name,
                 task_function=self,
                 overrides=overrides,
                 with_log_configuration=self.configure_logging,
@@ -104,7 +101,6 @@ class TTaskRunner(Protocol):
         config_path: Optional[str],
         config_name: Optional[str],
         overrides: Optional[List[str]] = None,
-        strict: Optional[bool] = None,
         configure_logging: bool = False,
     ) -> TaskTestFunction:
         ...
@@ -126,7 +122,6 @@ class SweepTaskFunction:
         self.task_function: Optional[TaskFunction] = None
         self.config_path: Optional[str] = None
         self.config_name: Optional[str] = None
-        self.strict: Optional[bool] = None
         self.sweeps = None
         self.returns = None
         self.configure_logging: bool = False
@@ -149,21 +144,18 @@ class SweepTaskFunction:
         overrides.append(f"hydra.sweep.dir={self.temp_dir}")
 
         try:
-            config_dir, config_name = split_config_path(
-                self.config_path, self.config_name
-            )
+            validate_config_path(self.config_path)
             job_name = detect_task_name(self.calling_file, self.calling_module)
 
             hydra_ = Hydra.create_main_hydra_file_or_module(
                 calling_file=self.calling_file,
                 calling_module=self.calling_module,
-                config_path=config_dir,
+                config_path=self.config_path,
                 job_name=job_name,
-                strict=self.strict,
             )
 
             self.returns = hydra_.multirun(
-                config_name=config_name,
+                config_name=self.config_name,
                 task_function=self,
                 overrides=overrides,
                 with_log_configuration=self.configure_logging,
@@ -191,7 +183,6 @@ class TSweepRunner(Protocol):
         config_path: Optional[str],
         config_name: Optional[str],
         overrides: Optional[List[str]],
-        strict: Optional[bool] = None,
         temp_dir: Optional[Path] = None,
     ) -> SweepTaskFunction:
         ...
@@ -279,8 +270,9 @@ def integration_test(
     expected_outputs: Union[str, List[str]],
     prolog: Union[None, str, List[str]] = None,
     filename: str = "task.py",
-    env_override: Dict[str, str] = {},
+    env_override: Optional[Dict[str, str]] = None,
     clean_environment: bool = False,
+    generate_custom_cmd: Callable[..., List[str]] = lambda cmd, *args, **kwargs: cmd,
 ) -> str:
     Path(tmpdir).mkdir(parents=True, exist_ok=True)
     if isinstance(expected_outputs, str):
@@ -298,7 +290,7 @@ from hydra.core.hydra_config import HydraConfig
 
 $PROLOG
 
-@hydra.main($CONFIG_NAME)
+@hydra.main(config_name='config')
 def experiment(cfg):
     with open("$OUTPUT_FILE", "w") as f:
 $PRINTS
@@ -311,34 +303,34 @@ if __name__ == "__main__":
     print_code = _get_statements(indent="        ", statements=prints)
     prolog_code = _get_statements(indent="", statements=prolog)
 
-    config_name = ""
     if task_config is not None:
         cfg_file = tmpdir / "config.yaml"
         with open(str(cfg_file), "w") as f:
             f.write("# @package _global_\n")
             OmegaConf.save(task_config, f)
-        config_name = "config_name='config'"
     output_file = str(tmpdir / "output.txt")
     # replace Windows path separator \ with an escaped version \\
     output_file = output_file.replace("\\", "\\\\")
     code = s.substitute(
         PRINTS=print_code,
-        CONFIG_NAME=config_name,
         OUTPUT_FILE=output_file,
         PROLOG=prolog_code,
     )
     task_file = tmpdir / filename
     task_file.write_text(str(code), encoding="utf-8")
+
     cmd = [sys.executable, str(task_file)]
-    cmd.extend(overrides)
     orig_dir = os.getcwd()
     try:
         os.chdir(str(tmpdir))
+        cmd = generate_custom_cmd(cmd, filename)
+        cmd.extend(overrides)
         if clean_environment:
             modified_env = {}
         else:
             modified_env = os.environ.copy()
-            modified_env.update(env_override)
+            if env_override is not None:
+                modified_env.update(env_override)
         subprocess.check_call(cmd, env=modified_env)
 
         with open(output_file, "r") as f:
@@ -368,14 +360,25 @@ def run_with_error(cmd: Any, env: Any = None) -> str:
     return err
 
 
-def get_run_output(
-    cmd: Any, env: Any = None, allow_warnings: bool = False
+def run_python_script(
+    cmd: Any,
+    env: Any = None,
+    allow_warnings: bool = False,
+    print_error: bool = True,
 ) -> Tuple[str, str]:
     if allow_warnings:
         cmd = [sys.executable] + cmd
     else:
         cmd = [sys.executable, "-Werror"] + cmd
+    return run_process(cmd, env, print_error)
 
+
+def run_process(
+    cmd: Any,
+    env: Any = None,
+    print_error: bool = True,
+    timeout: Optional[float] = None,
+) -> Tuple[str, str]:
     try:
         process = subprocess.Popen(
             args=cmd,
@@ -384,16 +387,18 @@ def get_run_output(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        bstdout, bstderr = process.communicate()
+        bstdout, bstderr = process.communicate(timeout=timeout)
         stdout = normalize_newlines(bstdout.decode().rstrip())
         stderr = normalize_newlines(bstderr.decode().rstrip())
         if process.returncode != 0:
-            sys.stderr.write(f"Subprocess error:\n{stderr}\n")
+            if print_error:
+                sys.stderr.write(f"Subprocess error:\n{stderr}\n")
             raise subprocess.CalledProcessError(returncode=process.returncode, cmd=cmd)
         return stdout, stderr
     except Exception as e:
-        cmd = " ".join(cmd)
-        print(f"==Error executing==\n{cmd}\n===================")
+        if print_error:
+            cmd = " ".join(cmd)
+            sys.stderr.write(f"=== Error executing:\n{cmd}\n===================")
         raise e
 
 
@@ -427,3 +432,30 @@ def assert_text_same(
         print(diff)
         print("-------------------------------")
         assert False, "Mismatch between expected and actual text"
+
+
+def assert_regex_match(
+    from_line: str, to_line: str, from_name: str = "Expected", to_name: str = "Actual"
+) -> None:
+    """Check that the lines of `from_line` (which can be a regex expression)
+    matches the corresponding lines of `to_line` string.
+
+    In case the regex match fails, we display the diff as if `from_line` was a regular string.
+    """
+    normalized_from_line = [x for x in normalize_newlines(from_line).split("\n") if x]
+    normalized_to_line = [x for x in normalize_newlines(to_line).split("\n") if x]
+    if len(normalized_from_line) != len(normalized_to_line):
+        assert_text_same(
+            from_line=from_line,
+            to_line=to_line,
+            from_name=from_name,
+            to_name=to_name,
+        )
+    for line1, line2 in zip(normalized_from_line, normalized_to_line):
+        if line1 != line2 and re.match(line1, line2) is None:
+            assert_text_same(
+                from_line=from_line,
+                to_line=to_line,
+                from_name=from_name,
+                to_name=to_name,
+            )

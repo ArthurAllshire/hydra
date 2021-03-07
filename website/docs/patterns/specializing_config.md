@@ -2,7 +2,10 @@
 id: specializing_config
 title: Specializing configuration
 ---
-[![Example application](https://img.shields.io/badge/-Example%20application-informational)](https://github.com/facebookresearch/hydra/tree/master/examples/patterns/specializing_config)
+
+import {ExampleGithubLink} from "@site/src/components/GithubLink"
+
+<ExampleGithubLink text="Example application" to="examples/patterns/specializing_config-select"/>
 
 In some cases the desired configuration should depend on other configuration choices.
 For example, You may want to use only 5 layers in your Alexnet model if the dataset of choice is cifar10, and the dafault 7 otherwise.
@@ -25,23 +28,26 @@ The idea is that we can add another element to the defaults list that would load
 defaults:
   - dataset: imagenet
   - model: alexnet
-  - dataset_model: ${defaults.0.dataset}_${defaults.1.model}
-    optional: true
+  - optional dataset_model: ${dataset}_${model}
 ```
 
 Let's break this down:
 #### dataset_model
 The key `dataset_model` is an arbitrary directory, it can be anything unique that makes sense, including nested directory like `dataset/model`.
 
-#### ${defaults.0.dataset}_${defaults.1.model}
-the value `${defaults.0.dataset}_${defaults.1.model}` is using OmegaConf's [variable interpolation](https://omegaconf.readthedocs.io/en/latest/usage.html#variable-interpolation).
+#### ${dataset}_${model}
+the value `${dataset}_${model}` is using OmegaConf's [variable interpolation](https://omegaconf.readthedocs.io/en/latest/usage.html#variable-interpolation) syntax.
 At runtime, that value would resolve to *imagenet_alexnet*, or *cifar_resnet* - depending on the values of defaults.dataset and defaults.model.
-This a bit clunky because defaults contains a list (I hope to improve this in the future)
 
-#### optional: true
-By default, Hydra would fail with an error if a config specified in the defaults does not exist.
+:::info
+This is non-standard interpolation and there are some subtle differences and limitations.
+:::
+
+
+#### optional
+By default, Hydra fails with an error if a config specified in the defaults does not exist.
 In this case we only want to specialize cifar10 + alexnet, not all 4 combinations.
-indication optional: true here tells Hydra to just continue if it can't find this file.
+the keyword `optional` tells Hydra to just continue if it can't find this file.
 
 When specializing config, you usually want to only specify what's different, and not the whole thing.
 We want the model for alexnet, when trained on cifar - to have 5 layers.

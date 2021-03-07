@@ -1,14 +1,14 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import warnings
-
 import re
 
 from abc import abstractmethod
 from dataclasses import dataclass
 from typing import List, Optional, Dict
 
+from hydra.core.default_element import InputDefault
 from hydra.errors import HydraException
-from omegaconf import Container, OmegaConf
+from omegaconf import Container
 
 from hydra.core.object_type import ObjectType
 from hydra.plugins.plugin import Plugin
@@ -19,7 +19,8 @@ class ConfigResult:
     provider: str
     path: str
     config: Container
-    header: Dict[str, str]
+    header: Dict[str, Optional[str]]
+    defaults_list: Optional[List[InputDefault]] = None
     is_schema_source: bool = False
 
 
@@ -46,12 +47,7 @@ class ConfigSource(Plugin):
         ...
 
     @abstractmethod
-    def load_config(
-        self,
-        config_path: str,
-        is_primary_config: bool,
-        package_override: Optional[str] = None,
-    ) -> ConfigResult:
+    def load_config(self, config_path: str) -> ConfigResult:
         ...
 
     # subclasses may override to improve performance
@@ -121,91 +117,18 @@ class ConfigSource(Plugin):
 
     @staticmethod
     def _normalize_file_name(filename: str) -> str:
+        if filename.endswith(".yml"):
+            # DEPRECATED: remove in 1.2
+            warnings.warn(
+                "Support for .yml files is deprecated. Use .yaml extension for Hydra config files"
+            )
         if not any(filename.endswith(ext) for ext in [".yaml", ".yml"]):
             filename += ".yaml"
         return filename
 
     @staticmethod
-    def _resolve_package(
-        config_without_ext: str, header: Dict[str, str], package_override: Optional[str]
-    ) -> str:
-        last = config_without_ext.rfind("/")
-        if last == -1:
-            group = ""
-            name = config_without_ext
-        else:
-            group = config_without_ext[0:last]
-            name = config_without_ext[last + 1 :]
-
-        if "package" in header:
-            package = header["package"]
-        else:
-            package = ""
-
-        if package_override is not None:
-            package = package_override
-
-        if package == "_global_":
-            package = ""
-        else:
-            package = package.replace("_group_", group).replace("/", ".")
-            package = package.replace("_name_", name)
-
-        return package
-
-    def _update_package_in_header(
-        self,
-        header: Dict[str, str],
-        normalized_config_path: str,
-        is_primary_config: bool,
-        package_override: Optional[str],
-    ) -> None:
-        config_without_ext = normalized_config_path[0 : -len(".yaml")]
-
-        package = ConfigSource._resolve_package(
-            config_without_ext=config_without_ext,
-            header=header,
-            package_override=package_override,
-        )
-
-        if is_primary_config:
-            if "package" not in header:
-                header["package"] = "_global_"
-            else:
-                if package != "":
-                    raise HydraException(
-                        f"Primary config '{config_without_ext}' must be "
-                        f"in the _global_ package; effective package : '{package}'"
-                    )
-        else:
-            if "package" not in header:
-                # Loading a config group option.
-                # Hydra 1.0: default to _global_ and warn.
-                # Hydra 1.1: default will change to _package_ and the warning will be removed.
-                header["package"] = "_global_"
-                msg = (
-                    f"\nMissing @package directive {normalized_config_path} in {self.full_path()}.\n"
-                    f"See https://hydra.cc/docs/next/upgrades/0.11_to_1.0/adding_a_package_directive"
-                )
-                warnings.warn(message=msg, category=UserWarning)
-
-        header["package"] = package
-
-    @staticmethod
-    def _embed_config(node: Container, package: str) -> Container:
-        if package == "_global_":
-            package = ""
-
-        if package is not None and package != "":
-            cfg = OmegaConf.create()
-            OmegaConf.update(cfg, package, node, merge=False)
-        else:
-            cfg = OmegaConf.structured(node)
-        return cfg
-
-    @staticmethod
-    def _get_header_dict(config_text: str) -> Dict[str, str]:
-        res = {}
+    def _get_header_dict(config_text: str) -> Dict[str, Optional[str]]:
+        res: Dict[str, Optional[str]] = {}
         for line in config_text.splitlines():
             line = line.strip()
             if len(line) == 0:
@@ -228,4 +151,6 @@ class ConfigSource(Plugin):
                 # stop parsing header on first non-header line
                 break
 
+        if "package" not in res:
+            res["package"] = None
         return res

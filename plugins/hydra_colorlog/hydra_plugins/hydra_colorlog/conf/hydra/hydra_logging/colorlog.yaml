@@ -1,5 +1,4 @@
-# @package _group_
-
+# @package hydra.hydra_logging
 # python logging configuration for tasks
 version: 1
 formatters:

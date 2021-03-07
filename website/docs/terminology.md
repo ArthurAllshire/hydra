@@ -3,7 +3,11 @@ id: terminology
 title: Terminology
 ---
 ## Overview
-This page describes some of the common concepts in Hydra. 
+:::note
+TODO: Update this page prior tp the 1.1 release.
+:::
+
+This page describes some common concepts in Hydra. 
 Most of the concepts are described in much more details throughout the documentation.
 
 ## Input Configs
@@ -16,7 +20,6 @@ Supported input configs are:
 ### Primary Config
 The input config named in [`@hydra.main()`](tutorials/basic/your_first_app/1_simple_cli.md) or in 
 the [`Compose API`](experimental/hydra_compose.md).  
-The Primary Config is the only config that is allowed to have a [Defaults List](#defaults-list)
 
 
 ### Structured Config
@@ -29,14 +32,14 @@ There are two primary patterns for using Structured configs:
 ```python title="Example:"
 @dataclass
 class User:
-  name: str = MISSING
-  age: int = MISSING
+  name: str
+  age: int
 ```
 
 
 ### Defaults List
-A list in the [Primary Config](#primary-config) that determines how to build the final [Config Object](#output-config-object). 
-The list is typically composed of [Config Group Options](#config-group-option). 
+A list in an [Input Config](#input-configs) that instructs Hydra how to build the config. 
+The list is typically composed of [Config Group Options](#config-group-option).
 ```yaml title="Example: config.yaml"
 defaults:
   - db: mysql
@@ -56,10 +59,14 @@ One of the configs in a Config Group.
 A Config Node is either a `Value Node` (a primitive type), or a `Container Node`.  A `Container Node` is a list or dictionary of `Value Nodes`.
 
 ### Package
-A Package is the path of the [Config Node](#config-node) in the [Config Object](#output-config-object). 
+A Package is the path to [Config Node](#config-node) in the [Config Object](#output-config-object). 
 
-### Package directive
-The [Package Directive](advanced/overriding_packages.md) specifies the root [Package](#package) of an [Config File](#input-configs)
+### Package Directive
+The [Package Directive](advanced/overriding_packages.md) specifies the root [Package](#package) of a [Config File](#input-configs)
+
+:::note
+TODO: fix
+:::
 
 ### Example
 ```yaml title="Input config: mi6/agent/james_bond.yaml"

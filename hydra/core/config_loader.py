@@ -1,7 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from omegaconf import DictConfig
 
@@ -9,14 +8,6 @@ from hydra.core.config_search_path import ConfigSearchPath
 from hydra.core.object_type import ObjectType
 from hydra.plugins.config_source import ConfigSource
 from hydra.types import RunMode
-
-
-@dataclass
-class LoadTrace:
-    filename: str
-    path: Optional[str]
-    provider: Optional[str]
-    schema_provider: Optional[str] = None
 
 
 class ConfigLoader(ABC):
@@ -30,7 +21,6 @@ class ConfigLoader(ABC):
         config_name: Optional[str],
         overrides: List[str],
         run_mode: RunMode,
-        strict: Optional[bool] = None,
         from_shell: bool = True,
     ) -> DictConfig:
         ...
@@ -43,10 +33,6 @@ class ConfigLoader(ABC):
 
     @abstractmethod
     def get_search_path(self) -> ConfigSearchPath:
-        ...
-
-    @abstractmethod
-    def get_load_history(self) -> List[LoadTrace]:
         ...
 
     @abstractmethod
@@ -64,5 +50,10 @@ class ConfigLoader(ABC):
         ...
 
     @abstractmethod
-    def ensure_main_config_source_available(self) -> None:
+    def compute_defaults_list(
+        self,
+        config_name: Optional[str],
+        overrides: List[str],
+        run_mode: RunMode,
+    ) -> Any:
         ...

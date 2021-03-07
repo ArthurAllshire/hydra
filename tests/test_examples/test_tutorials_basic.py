@@ -4,22 +4,22 @@ import subprocess
 from pathlib import Path
 from typing import Any, List
 
-import pytest
 from _pytest.python_api import RaisesContext
 from omegaconf import DictConfig, OmegaConf
+from pytest import mark, raises
 
 from hydra.test_utils.test_utils import (
     TSweepRunner,
     TTaskRunner,
     chdir_hydra_root,
-    get_run_output,
+    run_python_script,
     verify_dir_outputs,
 )
 
 chdir_hydra_root()
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "args,output_conf",
     [
         ([], OmegaConf.create()),
@@ -39,7 +39,7 @@ def test_tutorial_simple_cli_app(
         "hydra.run.dir=" + str(tmpdir),
     ]
     cmd.extend(args)
-    result, _err = get_run_output(cmd)
+    result, _err = run_python_script(cmd)
     assert OmegaConf.create(result) == output_conf
 
 
@@ -48,11 +48,11 @@ def test_tutorial_working_directory(tmpdir: Path) -> None:
         "examples/tutorials/basic/running_your_hydra_app/3_working_directory/my_app.py",
         "hydra.run.dir=" + str(tmpdir),
     ]
-    result, _err = get_run_output(cmd)
+    result, _err = run_python_script(cmd)
     assert result == "Working directory : {}".format(tmpdir)
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "args,expected",
     [
         ([], ["Info level message"]),
@@ -65,14 +65,14 @@ def test_tutorial_logging(tmpdir: Path, args: List[str], expected: List[str]) ->
         "hydra.run.dir=" + str(tmpdir),
     ]
     cmd.extend(args)
-    result, _err = get_run_output(cmd)
+    result, _err = run_python_script(cmd)
     lines = result.splitlines()
     assert len(lines) == len(expected)
     for i in range(len(lines)):
         assert re.findall(re.escape(expected[i]), lines[i])
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "args,output_conf",
     [
         (
@@ -89,11 +89,11 @@ def test_tutorial_config_file(tmpdir: Path, args: List[str], output_conf: Any) -
         "hydra.run.dir=" + str(tmpdir),
     ]
     cmd.extend(args)
-    result, _err = get_run_output(cmd)
+    result, _err = run_python_script(cmd)
     assert OmegaConf.create(result) == output_conf
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "args,expected",
     [
         (
@@ -102,7 +102,7 @@ def test_tutorial_config_file(tmpdir: Path, args: List[str], output_conf: Any) -
                 {"db": {"driver": "mysql", "user": "omry", "password": "secret"}}
             ),
         ),
-        (["dataset.path=abc"], pytest.raises(subprocess.CalledProcessError)),
+        (["dataset.path=abc"], raises(subprocess.CalledProcessError)),
     ],
 )
 def test_tutorial_config_file_bad_key(
@@ -117,13 +117,13 @@ def test_tutorial_config_file_bad_key(
     cmd.extend(args)
     if isinstance(expected, RaisesContext):
         with expected:
-            get_run_output(cmd)
+            run_python_script(cmd, print_error=False)
     else:
-        stdout, _stderr = get_run_output(cmd)
+        stdout, _stderr = run_python_script(cmd)
         assert OmegaConf.create(stdout) == expected
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "args,output_conf",
     [
         ([], OmegaConf.create()),
@@ -135,7 +135,7 @@ def test_tutorial_config_file_bad_key(
                         "driver": "postgresql",
                         "password": "drowssap",
                         "timeout": 10,
-                        "user": "postgre_user",
+                        "user": "postgres_user",
                     }
                 }
             ),
@@ -150,11 +150,11 @@ def test_tutorial_config_groups(
         "hydra.run.dir=" + str(tmpdir),
     ]
     cmd.extend(args)
-    result, _err = get_run_output(cmd)
+    result, _err = run_python_script(cmd)
     assert OmegaConf.create(result) == output_conf
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "args,expected",
     [
         ([], {"db": {"driver": "mysql", "pass": "secret", "user": "omry"}}),
@@ -165,7 +165,7 @@ def test_tutorial_config_groups(
                     "driver": "postgresql",
                     "pass": "drowssap",
                     "timeout": 10,
-                    "user": "postgre_user",
+                    "user": "postgres_user",
                 }
             },
         ),
@@ -176,7 +176,7 @@ def test_tutorial_config_groups(
                     "driver": "postgresql",
                     "pass": "drowssap",
                     "timeout": 20,
-                    "user": "postgre_user",
+                    "user": "postgres_user",
                 }
             },
         ),
@@ -188,7 +188,7 @@ def test_tutorial_defaults(tmpdir: Path, args: List[str], expected: DictConfig) 
         "hydra.run.dir=" + str(tmpdir),
     ]
     cmd.extend(args)
-    result, _err = get_run_output(cmd)
+    result, _err = run_python_script(cmd)
     assert OmegaConf.create(result) == OmegaConf.create(expected)
 
 
@@ -251,7 +251,7 @@ def test_sweeping_example(
             assert tuple(ret.overrides) in overrides
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "args,expected",
     [
         (
@@ -281,13 +281,15 @@ def test_sweeping_example(
     ],
 )
 def test_advanced_ad_hoc_composition(
-    tmpdir: Path, args: List[str], expected: Any
+    monkeypatch: Any, tmpdir: Path, args: List[str], expected: Any
 ) -> None:
+
+    monkeypatch.setenv("USER", "test_user")
     cmd = [
         "examples/advanced/ad_hoc_composition/hydra_compose_example.py",
         "hydra.run.dir=" + str(tmpdir),
     ]
-    result, _err = get_run_output(cmd)
+    result, _err = run_python_script(cmd)
     assert OmegaConf.create(result) == OmegaConf.create(expected)
 
 
@@ -297,4 +299,4 @@ def test_examples_using_the_config_object(tmpdir: Path) -> None:
         "hydra.run.dir=" + str(tmpdir),
     ]
 
-    get_run_output(cmd)
+    run_python_script(cmd)

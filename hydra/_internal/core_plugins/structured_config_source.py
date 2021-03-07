@@ -28,31 +28,13 @@ class StructuredConfigSource(ConfigSource):
     def scheme() -> str:
         return "structured"
 
-    def load_config(
-        self,
-        config_path: str,
-        is_primary_config: bool,
-        package_override: Optional[str] = None,
-    ) -> ConfigResult:
+    def load_config(self, config_path: str) -> ConfigResult:
         normalized_config_path = self._normalize_file_name(config_path)
         ret = self.store.load(config_path=normalized_config_path)
         provider = ret.provider if ret.provider is not None else self.provider
-        header = {}
-        if ret.package:
-            header["package"] = ret.package
-        else:
-            if is_primary_config:
-                header["package"] = "_global_"
-
-        self._update_package_in_header(
-            header=header,
-            normalized_config_path=normalized_config_path,
-            is_primary_config=is_primary_config,
-            package_override=package_override,
-        )
-        cfg = self._embed_config(ret.node, header["package"])
+        header = {"package": ret.package}
         return ConfigResult(
-            config=cfg,
+            config=ret.node,
             path=f"{self.scheme()}://{self.path}",
             provider=provider,
             header=header,

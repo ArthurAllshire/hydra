@@ -13,7 +13,12 @@ module.exports = {
     favicon: 'img/Hydra-head.svg',
     organizationName: 'facebookresearch', // Usually your GitHub org/user name.
     projectName: 'hydra', // Usually your repo name.
-    plugins: [require.resolve('docusaurus-plugin-internaldocs-fb')],
+    customFields: {
+        githubLinkVersionToBaseUrl: {
+            "1.0": "https://github.com/facebookresearch/hydra/blob/1.0_branch/",
+            current: "https://github.com/facebookresearch/hydra/blob/master/",
+        },
+    },    
     themeConfig: {
         googleAnalytics: {
             trackingID: 'UA-149862507-1',
@@ -23,6 +28,11 @@ module.exports = {
             indexName: 'hydra',
             algoliaOptions: {},
         },
+        announcementBar: {
+          id: 'supportus',
+          content:
+            '⭐️ If you like Hydra, give it a star on <a target="_blank" rel="noopener noreferrer" href="https://github.com/facebookresearch/hydra">GitHub</a>! ⭐️',
+        },        
 		prism: {
 		  additionalLanguages: ['antlr4'],
 		},
@@ -79,6 +89,12 @@ module.exports = {
                             target: '_blank',
                             rel: 'noreferrer noopener',
                         },
+                        {
+                            label: 'Cookies',
+                            href: 'https://opensource.facebook.com/legal/cookie-policy',
+                            target: '_blank',
+                            rel: 'noreferrer noopener',
+                        },
                     ],
                 },
             ],
@@ -93,7 +109,7 @@ module.exports = {
     },
     presets: [
         [
-            '@docusaurus/preset-classic',
+            require.resolve('docusaurus-plugin-internaldocs-fb/docusaurus-preset'),
             {
                 docs: {
                     sidebarPath: require.resolve('./sidebars.js'),

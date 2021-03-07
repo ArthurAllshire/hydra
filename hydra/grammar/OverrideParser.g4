@@ -11,19 +11,14 @@ options {tokenVocab = OverrideLexer;}
 override: (
       key EQUAL value?                           // key=value, key= (for empty value)
     | TILDE key (EQUAL value?)?                  // ~key | ~key=value
-    | PLUS key EQUAL value?                      // +key= | +key=value
+    | PLUS PLUS? key EQUAL value?                // +key= | +key=value | ++key=value
 ) EOF;
 
-// Keys.
-
-key :
-    packageOrGroup                               // key
-    | packageOrGroup AT package (COLON package)? // group@pkg | group@pkg1:pkg2
-    | packageOrGroup ATCOLON package             // group@:pkg2
-;
+// Key:
+key : packageOrGroup (AT package)?;              // key | group@pkg
 
 packageOrGroup: package | ID (SLASH ID)+;        // db, hydra/launcher
-package: (ID | DOT_PATH);                        // db, hydra.launcher
+package: ( | ID | DOT_PATH);                     // db, hydra.launcher, or the empty (for _global_ package)
 
 // Elements (that may be swept over).
 
@@ -31,8 +26,8 @@ value: element | simpleChoiceSweep;
 
 element:
       primitive
-    | listValue
-    | dictValue
+    | listContainer
+    | dictContainer
     | function
 ;
 
@@ -47,12 +42,12 @@ function: ID POPEN (argName? element (COMMA argName? element )* )? PCLOSE;
 
 // Data structures.
 
-listValue: BRACKET_OPEN                          // [], [1,2,3], [a,b,[1,2]]
+listContainer: BRACKET_OPEN                      // [], [1,2,3], [a,b,[1,2]]
     (element(COMMA element)*)?
 BRACKET_CLOSE;
 
-dictValue: BRACE_OPEN (dictKeyValuePair (COMMA dictKeyValuePair)*)? BRACE_CLOSE;  // {}, {a:10,b:20}
-dictKeyValuePair: ID COLON element;
+dictContainer: BRACE_OPEN (dictKeyValuePair (COMMA dictKeyValuePair)*)? BRACE_CLOSE;  // {}, {a:10,b:20}
+dictKeyValuePair: dictKey COLON element;
 
 // Primitive types.
 
@@ -64,8 +59,21 @@ primitive:
         | FLOAT                                  // 3.14, -20.0, 1e-1, -10e3
         | BOOL                                   // true, TrUe, false, False
         | INTERPOLATION                          // ${foo.bar}, ${env:USER,me}
-        | UNQUOTED_CHAR                          // /, -, \, +, ., $, %, *
+        | UNQUOTED_CHAR                          // /, -, \, +, ., $, %, *, @
         | COLON                                  // :
+        | ESC                                    // \\, \(, \), \[, \], \{, \}, \:, \=, \ , \\t, \,
+        | WS                                     // whitespaces
+    )+;
+
+// Same as `primitive` except that `COLON` and `INTERPOLATION` are not allowed.
+dictKey:
+      QUOTED_VALUE                               // 'hello world', "hello world"
+    | (   ID                                     // foo_10
+        | NULL                                   // null, NULL
+        | INT                                    // 0, 10, -20, 1_000_000
+        | FLOAT                                  // 3.14, -20.0, 1e-1, -10e3
+        | BOOL                                   // true, TrUe, false, False
+        | UNQUOTED_CHAR                          // /, -, \, +, ., $, %, *, @
         | ESC                                    // \\, \(, \), \[, \], \{, \}, \:, \=, \ , \\t, \,
         | WS                                     // whitespaces
     )+;

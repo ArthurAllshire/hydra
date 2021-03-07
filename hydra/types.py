@@ -1,8 +1,8 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict
+from typing import Any, Callable
 
 from omegaconf import MISSING
 
@@ -10,39 +10,49 @@ TaskFunction = Callable[[Any], Any]
 
 
 @dataclass
-# This extends Dict[str, Any] to allow for the deprecated "class" field.
-# Once support for class field removed this can stop extending Dict.
-class ObjectConf(Dict[str, Any]):
-    def __post_init__(self) -> None:
-        msg = (
-            "\nObjectConf is deprecated in favor of TargetConf since Hydra 1.0.0rc3 and will be removed in Hydra 1.1."
-            "\nSee https://hydra.cc/docs/next/upgrades/0.11_to_1.0/object_instantiation_changes"
-        )
-        warnings.warn(message=msg, category=UserWarning)
-
-    # class, class method or function name
-    target: str = MISSING
-
-    # parameters to pass to cls when calling it
-    params: Any = field(default_factory=dict)
-
-
-@dataclass
 class TargetConf:
     """
-    Use by subclassing and adding fields
-    e.g:
-    @dataclass
-    class UserConf:
-        _target_ : str = "module.User"
-        name: str = MISSING
-        age: int = MISSING
+    This class is going away in Hydra 1.2.
+    You should no longer extend it or annotate with it.
+    instantiate will work correctly if you pass in a DictConfig object or any dataclass that has the
+    _target_ attribute.
     """
 
-    # class, class method or function name
     _target_: str = MISSING
+
+    def __post_init__(self) -> None:
+        # DEPRECATED: remove in 1.2
+        msg = "\nTargetConf is deprecated since Hydra 1.1 and will be removed in Hydra 1.2."
+        warnings.warn(message=msg, category=UserWarning)
 
 
 class RunMode(Enum):
     RUN = 1
     MULTIRUN = 2
+
+
+class ConvertMode(str, Enum):
+    """ConvertMode for instantiate, controls return type.
+
+    A config is either config or instance-like (`_target_` field).
+
+    If instance-like, instantiate resolves the callable (class or
+    function) and returns the result of the call on the rest of the
+    parameters.
+
+    If "none", config-like configs will be kept as is.
+
+    If "partial", config-like configs will be converted to native python
+    containers (list and dict), unless they are structured configs (
+    dataclasses or attr instances).
+
+    If "all", config-like configs will all be converted to native python
+    containers (list and dict).
+    """
+
+    # Use DictConfig/ListConfig
+    NONE = "none"
+    # Convert the OmegaConf config to primitive container, Structured Configs are preserved
+    PARTIAL = "partial"
+    # Fully convert the OmegaConf config to primitive containers (dict, list and primitives).
+    ALL = "all"

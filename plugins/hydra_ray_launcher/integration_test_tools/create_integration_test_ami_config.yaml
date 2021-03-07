@@ -1,0 +1,53 @@
+security_group_id: sg-095ac7c26aa0d33bb
+ray_yaml:
+  cluster_name: ray_test_base_AMI
+  min_workers: 0
+  max_workers: 1
+  initial_workers: 0
+  autoscaling_mode: default
+  target_utilization_fraction: 0.8
+  idle_timeout_minutes: 5
+  docker:
+    image: ''
+    container_name: ''
+    pull_before_run: true
+    run_options: []
+  provider:
+    type: aws
+    region: us-west-2
+    availability_zone: us-west-2a,us-west-2b
+    cache_stopped_nodes: true
+    key_pair:
+      key_name: hydra
+  auth:
+    ssh_user: ubuntu
+
+  head_node:
+    InstanceType: m5.large
+    ImageId: ami-008d8ed4bd7dc2485
+    SubnetId: subnet-acd2cfe7
+    SecurityGroupIds:
+      - sg-0a12b09a5ff961aee
+    IamInstanceProfile:
+      Arn: arn:aws:iam::135937774131:instance-profile/ray-autoscaler-v1
+  worker_nodes:
+    InstanceType: m5.large
+    ImageId: ami-008d8ed4bd7dc2485
+    SubnetId: subnet-acd2cfe7
+    SecurityGroupIds:
+      - sg-0a12b09a5ff961aee
+    IamInstanceProfile:
+      Arn: arn:aws:iam::135937774131:instance-profile/ray-autoscaler-v1
+    InstanceMarketOptions:
+      MarketType: spot
+  file_mounts: {}
+  initialization_commands: []
+  setup_commands:
+    - pip install boto3==1.17.17
+    - pip install ray==1.2.0
+    - pip install --ignore-installed PyYAML
+    - pip install hydra-core>=1.0.0
+  head_setup_commands: []
+  worker_setup_commands: []
+  head_start_ray_commands: []
+  worker_start_ray_commands: []

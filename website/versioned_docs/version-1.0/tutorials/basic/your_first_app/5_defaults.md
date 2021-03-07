@@ -3,7 +3,9 @@ id: defaults
 title: Selecting defaults for config groups
 ---
 
-[![Example](https://img.shields.io/badge/-Example-informational)](https://github.com/facebookresearch/hydra/tree/master/examples/tutorials/basic/your_first_hydra_app/5_defaults)
+import {ExampleGithubLink} from "@site/src/components/GithubLink"
+
+<ExampleGithubLink to="examples/tutorials/basic/your_first_hydra_app/5_defaults"/>
 
 After office politics, you decide that you want to use MySQL by default.
 You no longer want to type `+db=mysql` every time you run your application.
@@ -54,7 +56,7 @@ db:
   driver: postgresql
   pass: drowssap
   timeout: 20
-  user: postgre_user
+  user: postgres_user
 ```
 
 You can remove a default entry from the defaults list by prefixing it with ~:

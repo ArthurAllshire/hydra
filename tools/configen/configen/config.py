@@ -2,15 +2,22 @@
 from dataclasses import dataclass
 from typing import List, Optional
 
+from hydra.core.config_store import ConfigStore
+from hydra.utils import ConvertMode
 from omegaconf import MISSING
 
-from hydra.core.config_store import ConfigStore
+
+@dataclass
+class Flags:
+    _convert_: Optional[ConvertMode] = None
+    _recursive_: Optional[bool] = None
 
 
 @dataclass
 class ModuleConf:
     name: str = MISSING
     classes: List[str] = MISSING
+    default_flags: Flags = Flags()
 
 
 @dataclass
@@ -34,4 +41,4 @@ class Config:
 
 
 config_store = ConfigStore.instance()
-config_store.store(name="configen", node=Config)
+config_store.store(name="configen_schema", node=Config)

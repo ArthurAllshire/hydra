@@ -53,8 +53,6 @@ module.exports = {
                 'tutorials/structured_config/config_groups',
                 'tutorials/structured_config/defaults',
                 'tutorials/structured_config/schema',
-                'tutorials/structured_config/static_schema',
-                'tutorials/structured_config/dynamic_schema',
                 'tutorials/structured_config/config_store',
             ],
           },
@@ -70,6 +68,9 @@ module.exports = {
                     'patterns/instantiate_objects/structured_config',
                  ]
              },
+            'patterns/extending_configs',
+            'patterns/configuring_experiments',
+            'patterns/select_multiple_configs_from_config_group',
             'patterns/specializing_config',
             'patterns/write_protect_config_node',
         ],
@@ -82,16 +83,26 @@ module.exports = {
             'configure_hydra/app_help',
         ],
 
-        'Plugins': [
-            'plugins/ax_sweeper',
+        'Available Plugins': [
             'plugins/colorlog',
-            'plugins/joblib_launcher',
-            'plugins/nevergrad_sweeper',
-            'plugins/rq_launcher',
-            'plugins/submitit_launcher',
+            {
+                'Launchers': [
+                    'plugins/joblib_launcher',
+                    'plugins/ray_launcher',
+                    'plugins/rq_launcher',
+                    'plugins/submitit_launcher',
+                ]
+            },
+            {
+                'Sweepers': [
+                    'plugins/ax_sweeper',
+                    'plugins/nevergrad_sweeper',
+                    'plugins/optuna_sweeper',
+                ]
+            },
         ],
 
-        'Advanced': [
+        'Reference manual': [
             'advanced/hydra-command-line-flags',
             {
                 type: 'category',
@@ -101,6 +112,7 @@ module.exports = {
                     'advanced/override_grammar/extended',
                 ]
             },
+            'advanced/defaults_list',
             'advanced/overriding_packages',
             'advanced/search_path',
             'advanced/plugins',
@@ -125,6 +137,17 @@ module.exports = {
         Upgrades: [
           {
             type: 'category',
+            label: '1.0 to 1.1',
+            items: [
+                'upgrades/1.0_to_1.1/default_composition_order',
+                'upgrades/1.0_to_1.1/defaults_list_override',
+                'upgrades/1.0_to_1.1/defaults_list_interpolation',
+                'upgrades/1.0_to_1.1/changes_to_package_header',
+                'upgrades/1.0_to_1.1/automatic_schema_matching',
+            ],
+          },
+          {
+            type: 'category',
             label: '0.11 to 1.0',
             items: [
                 'upgrades/0.11_to_1.0/config_path_changes',
@@ -140,6 +163,8 @@ module.exports = {
             'fb/fbcode',
             'fb/internal-fb-cluster',
             'fb/fair-cluster',
+            'fb/fbcode-configerator-config-source',
+            'fb/flow-launcher',
         ]),
     }
 }

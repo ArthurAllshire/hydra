@@ -1,4 +1,6 @@
+.benchmarks
 /.idea
+/temp
 outputs
 multirun
 dist
@@ -9,6 +11,7 @@ __pycache__
 /.nox
 /report.json
 /.coverage
+/temp
 .mypy_cache
 pip-wheel-metadata
 .ipynb_checkpoints

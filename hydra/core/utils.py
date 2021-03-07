@@ -4,13 +4,13 @@ import logging
 import os
 import re
 import sys
-import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
-from os.path import basename, dirname, splitext
+from datetime import datetime
+from os.path import splitext
 from pathlib import Path
-from time import localtime, strftime
-from typing import Any, Dict, Optional, Sequence, Tuple, Union, cast
+from textwrap import dedent
+from typing import Any, Dict, Optional, Sequence, Union, cast
 
 from omegaconf import DictConfig, OmegaConf, open_dict, read_write
 
@@ -31,14 +31,16 @@ def simple_stdout_log_config(level: int = logging.INFO) -> None:
 
 
 def configure_log(
-    log_config: DictConfig, verbose_config: Union[bool, str, Sequence[str]]
+    log_config: DictConfig,
+    verbose_config: Union[bool, str, Sequence[str]] = False,
 ) -> None:
     assert isinstance(verbose_config, (bool, str)) or OmegaConf.is_list(verbose_config)
     if log_config is not None:
         conf: Dict[str, Any] = OmegaConf.to_container(  # type: ignore
             log_config, resolve=True
         )
-        logging.config.dictConfig(conf)
+        if conf["root"] is not None:
+            logging.config.dictConfig(conf)
     else:
         # default logging to stdout
         root = logging.getLogger()
@@ -97,6 +99,8 @@ def run_job(
     configure_logging: bool = True,
 ) -> "JobReturn":
     old_cwd = os.getcwd()
+    orig_hydra_cfg = HydraConfig.instance().cfg
+    HydraConfig.instance().set_config(config)
     working_dir = str(OmegaConf.select(config, job_dir_key))
     if job_subdir_key is not None:
         # evaluate job_subdir_key lazily.
@@ -111,8 +115,11 @@ def run_job(
         with read_write(task_cfg):
             with open_dict(task_cfg):
                 del task_cfg["hydra"]
+
         ret.cfg = task_cfg
-        ret.hydra_cfg = OmegaConf.create({"hydra": HydraConfig.get()})
+        hydra_cfg = copy.deepcopy(HydraConfig.instance().cfg)
+        assert isinstance(hydra_cfg, DictConfig)
+        ret.hydra_cfg = hydra_cfg
         overrides = OmegaConf.to_container(config.hydra.overrides.task)
         assert isinstance(overrides, list)
         ret.overrides = overrides
@@ -122,9 +129,6 @@ def run_job(
 
         if configure_logging:
             configure_log(config.hydra.job_logging, config.hydra.verbose)
-
-        hydra_cfg = OmegaConf.masked_copy(config, "hydra")
-        assert isinstance(hydra_cfg, DictConfig)
 
         if config.hydra.output_subdir is not None:
             hydra_output = Path(config.hydra.output_subdir)
@@ -140,6 +144,7 @@ def run_job(
 
         return ret
     finally:
+        HydraConfig.instance().cfg = orig_hydra_cfg
         os.chdir(old_cwd)
 
 
@@ -157,7 +162,7 @@ def setup_globals() -> None:
             pass
 
     # please add documentation when you add a new resolver
-    register("now", lambda pattern: strftime(pattern, localtime()))
+    register("now", lambda pattern: datetime.now().strftime(pattern))
     register(
         "hydra",
         lambda path: OmegaConf.select(cast(DictConfig, HydraConfig.get()), path),
@@ -198,40 +203,17 @@ class JobRuntime(metaclass=Singleton):
         self.conf[key] = value
 
 
-def split_config_path(
-    config_path: Optional[str], config_name: Optional[str]
-) -> Tuple[Optional[str], Optional[str]]:
-    if config_path is None or config_path == "":
-        return None, config_name
-    split_file = splitext(config_path)
-    if split_file[1] in (".yaml", ".yml"):
-        # assuming dir/config.yaml form
-        config_file: Optional[str] = basename(config_path)
-        config_dir: Optional[str] = dirname(config_path)
-        msg = (
-            "\nUsing config_path to specify the config name is deprecated, specify the config name via config_name"
-            "\nSee https://hydra.cc/docs/next/upgrades/0.11_to_1.0/config_path_changes"
-        )
-        warnings.warn(category=UserWarning, message=msg)
-    else:
-        # assuming dir form without a config file.
-        config_file = None
-        config_dir = config_path
-
-    if config_dir == "":
-        config_dir = None
-
-    if config_file == "":
-        config_file = None
-
-    if config_file is not None:
-        if config_name is not None:
-            raise ValueError(
-                "Config name should be specified in either normalized_config_path or config_name, but not both"
+def validate_config_path(config_path: Optional[str]) -> None:
+    if config_path is not None:
+        split_file = splitext(config_path)
+        if split_file[1] in (".yaml", ".yml"):
+            msg = dedent(
+                """\
+            Using config_path to specify the config name is not supported, specify the config name via config_name.
+            See https://hydra.cc/docs/next/upgrades/0.11_to_1.0/config_path_changes
+            """
             )
-        config_name = config_file
-
-    return config_dir, config_name
+            raise ValueError(msg)
 
 
 @contextmanager
@@ -255,4 +237,8 @@ def _flush_loggers() -> None:
     # Python logging does not have an official API to flush all loggers.
     # This will have to do.
     for h_weak_ref in logging._handlerList:  # type: ignore
-        h_weak_ref().flush()
+        try:
+            h_weak_ref().flush()
+        except Exception:
+            # ignore exceptions thrown during flushing
+            pass

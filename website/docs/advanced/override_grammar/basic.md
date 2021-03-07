@@ -3,6 +3,9 @@ id: basic
 hide_title: true
 sidebar_label: Basic Override syntax
 ---
+
+import GithubLink from "@site/src/components/GithubLink"
+
 ## Basic Override syntax
 You can manipulate your configuration with overrides (via the command line or the Compose API). This includes:
 - Modifying the the `Defaults List`
@@ -15,21 +18,17 @@ The rest are manipulating the config object.
 ### Modifying the Config Object
 - Overriding a config value : `foo.bar=value`
 - Appending a config value : `+foo.bar=value`
+- Appending or overriding a config value : `++foo.bar=value`
 - Removing a config value : `~foo.bar`, `~foo.bar=value`
 
 ### Modifying the Defaults List
 - Overriding selected Option: `db=mysql`
-- Changing a package: `db@src_pkg:dst_pkg`
-- Overriding selected Option and changing the package: `db@src_pkg:dst_pkg=mysql`
-- Appending to defaults: `+db=mysql`
-- Deleting from defaults: `~db`, `~db=mysql`
+- Appending to Defaults List: `+db=mysql`
+- Deleting from Defaults List: `~db`, `~db=mysql`
 
 ## Grammar
 Hydra supports a rich [DSL](https://en.wikipedia.org/wiki/Domain-specific_language) in the command line.
-Below are the parser rules from grammar.
-You can see the full grammar on GitHub
-([lexer](https://github.com/facebookresearch/hydra/tree/master/hydra/grammar/OverrideLexer.g4) and
-[parser](https://github.com/facebookresearch/hydra/tree/master/hydra/grammar/OverrideParser.g4)).
+Below are the parser rules from grammar. You can see the full <GithubLink to="hydra/grammar/OverrideLexer.g4">Lexer</GithubLink> and <GithubLink to="hydra/grammar/OverrideParser.g4">Parser</GithubLink> definitions on GitHub.
 
 ```antlr4 title="OverrideParser.g4"
 // High-level command-line override.
@@ -37,16 +36,12 @@ You can see the full grammar on GitHub
 override: (
       key EQUAL value?                           // key=value, key= (for empty value)
     | TILDE key (EQUAL value?)?                  // ~key | ~key=value
-    | PLUS key EQUAL value?                      // +key= | +key=value
+    | PLUS PLUS? key EQUAL value?                // +key= | +key=value | ++key=value
 ) EOF;
 
 // Keys.
 
-key :
-    packageOrGroup                               // key
-    | packageOrGroup AT package (COLON package)? // group@pkg | group@pkg1:pkg2
-    | packageOrGroup ATCOLON package             // group@:pkg2
-;
+key : packageOrGroup (AT package)?;              // key | group@pkg
 
 packageOrGroup: package | ID (SLASH ID)+;        // db, hydra/launcher
 package: (ID | DOT_PATH);                        // db, hydra.launcher
@@ -57,8 +52,8 @@ value: element | simpleChoiceSweep;
 
 element:
       primitive
-    | listValue
-    | dictValue
+    | listContainer
+    | dictContainer
     | function
 ;
 
@@ -73,12 +68,12 @@ function: ID POPEN (argName? element (COMMA argName? element )* )? PCLOSE;
 
 // Data structures.
 
-listValue: BRACKET_OPEN                          // [], [1,2,3], [a,b,[1,2]]
+listContainer: BRACKET_OPEN                      // [], [1,2,3], [a,b,[1,2]]
     (element(COMMA element)*)?
 BRACKET_CLOSE;
 
-dictValue: BRACE_OPEN (dictKeyValuePair (COMMA dictKeyValuePair)*)? BRACE_CLOSE;  // {}, {a:10,b:20}
-dictKeyValuePair: ID COLON element;
+dictContainer: BRACE_OPEN (dictKeyValuePair (COMMA dictKeyValuePair)*)? BRACE_CLOSE;  // {}, {a:10,b:20}
+dictKeyValuePair: dictKey COLON element;
 
 // Primitive types.
 
@@ -90,8 +85,21 @@ primitive:
         | FLOAT                                  // 3.14, -20.0, 1e-1, -10e3
         | BOOL                                   // true, TrUe, false, False
         | INTERPOLATION                          // ${foo.bar}, ${env:USER,me}
-        | UNQUOTED_CHAR                          // /, -, \, +, ., $, %, *
+        | UNQUOTED_CHAR                          // /, -, \, +, ., $, %, *, @
         | COLON                                  // :
+        | ESC                                    // \\, \(, \), \[, \], \{, \}, \:, \=, \ , \\t, \,
+        | WS                                     // whitespaces
+    )+;
+
+// Same as `primitive` except that `COLON` and `INTERPOLATION` are not allowed.
+dictKey:
+      QUOTED_VALUE                               // 'hello world', "hello world"
+    | (   ID                                     // foo_10
+        | NULL                                   // null, NULL
+        | INT                                    // 0, 10, -20, 1_000_000
+        | FLOAT                                  // 3.14, -20.0, 1e-1, -10e3
+        | BOOL                                   // true, TrUe, false, False
+        | UNQUOTED_CHAR                          // /, -, \, +, ., $, %, *, @
         | ESC                                    // \\, \(, \), \[, \], \{, \}, \:, \=, \ , \\t, \,
         | WS                                     // whitespaces
     )+;

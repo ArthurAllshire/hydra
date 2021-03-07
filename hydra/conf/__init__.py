@@ -6,23 +6,6 @@ from omegaconf import MISSING
 
 from hydra.core.config_store import ConfigStore
 
-hydra_defaults = [
-    # Hydra's logging config
-    {"hydra/hydra_logging": "default"},
-    # Job's logging config
-    {"hydra/job_logging": "default"},
-    # Launcher config
-    {"hydra/launcher": "basic"},
-    # Sweeper config
-    {"hydra/sweeper": "basic"},
-    # Output directory
-    {"hydra/output": "default"},
-    # --help template
-    {"hydra/help": "default"},
-    # --hydra-help template
-    {"hydra/hydra_help": "default"},
-]
-
 
 @dataclass
 class HelpConf:
@@ -106,6 +89,22 @@ class RuntimeConf:
 
 @dataclass
 class HydraConf:
+    defaults: List[Any] = field(
+        default_factory=lambda: [
+            {"output": "default"},
+            {"launcher": "basic"},
+            {"sweeper": "basic"},
+            {"help": "default"},
+            {"hydra_help": "default"},
+            {"hydra_logging": "default"},
+            {"job_logging": "default"},
+        ]
+    )
+
+    # Elements to append to the config search path.
+    # Note: This can only be configured in the primary config.
+    searchpath: List[str] = field(default_factory=list)
+
     # Normal run output configuration
     run: RunDir = RunDir()
     # Multi-run output configuration
@@ -149,14 +148,15 @@ class HydraConf:
     # TODO: good use case for Union support in OmegaConf
     verbose: Any = False
 
+    # Composition choices dictionary
+    choices: Dict[str, str] = field(default_factory=lambda: {})
 
-ConfigStore.instance().store(
-    name="hydra_config",
-    node={
-        # Hydra composition defaults
-        "defaults": hydra_defaults,
-        # Hydra config
-        "hydra": HydraConf,
-    },
+
+cs = ConfigStore.instance()
+
+cs.store(
+    group="hydra",
+    name="config",
+    node=HydraConf(),
     provider="hydra",
 )

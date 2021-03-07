@@ -2,7 +2,10 @@
 id: write_protect_config_node
 title: Read-only config
 ---
-[![Example application](https://img.shields.io/badge/-Example%20application-informational)](https://github.com/facebookresearch/hydra/tree/master/examples/patterns/write_protect_config_node)
+import {ExampleGithubLink} from "@site/src/components/GithubLink"
+
+<ExampleGithubLink text="Example application" to="examples/patterns/write_protect_config_node"/>
+
 ### Problem
 Sometimes you want to prevent a config node from being changed accidentally.
 
@@ -42,13 +45,12 @@ $ python frozen.py data_bits=10
 Error merging override data_bits=10
 Cannot change read-only config container
     full_key: data_bits
-    reference_type=Optional[SerialPort]
     object_type=SerialPort
 ```
 </div></div>
 
 <div class="alert alert--warning" role="alert">
 <strong>NOTE</strong>:
-A crafty user can find many ways around this. this is just making it harder to change things accidentally.
+A crafty user can find many ways around this. This is just making it harder to change things accidentally.
 </div>
 

@@ -12,9 +12,9 @@ fragment DIGIT: [0-9];
 fragment INT_UNSIGNED: '0' | [1-9] (('_')? DIGIT)*;
 fragment ESC_BACKSLASH: '\\\\';  // escaped backslash
 
-/////////
-// KEY //
-/////////
+////////////////////////
+// DEFAULT_MODE (KEY) //
+////////////////////////
 
 EQUAL: '=' WS? -> mode(VALUE_MODE);
 
@@ -22,15 +22,14 @@ TILDE: '~';
 PLUS: '+';
 AT: '@';
 COLON: ':';
-ATCOLON: '@:';
 SLASH: '/';
 
 KEY_ID: ID -> type(ID);
 DOT_PATH: (ID | INT_UNSIGNED) ('.' (ID | INT_UNSIGNED))+;
 
-///////////
-// VALUE //
-///////////
+////////////////
+// VALUE_MODE //
+////////////////
 
 mode VALUE_MODE;
 
@@ -47,7 +46,7 @@ VALUE_EQUAL: WS? '=' WS? -> type(EQUAL);
 // Numbers.
 
 fragment POINT_FLOAT: INT_UNSIGNED '.' | INT_UNSIGNED? '.' DIGIT (('_')? DIGIT)*;
-fragment EXPONENT_FLOAT: (INT_UNSIGNED | POINT_FLOAT) [eE] [+-]? INT_UNSIGNED;
+fragment EXPONENT_FLOAT: (INT_UNSIGNED | POINT_FLOAT) [eE] [+-]? DIGIT (('_')? DIGIT)*;
 FLOAT: [+-]? (POINT_FLOAT | EXPONENT_FLOAT | [Ii][Nn][Ff] | [Nn][Aa][Nn]);
 INT: [+-]? INT_UNSIGNED;
 
@@ -59,8 +58,10 @@ BOOL:
 
 NULL: [Nn][Uu][Ll][Ll];
 
-UNQUOTED_CHAR: [/\-\\+.$%*];  // other characters allowed in unquoted strings
+UNQUOTED_CHAR: [/\-\\+.$%*@];  // other characters allowed in unquoted strings
 ID: (CHAR|'_') (CHAR|DIGIT|'_')*;
+// Note: when adding more characters to the ESC rule below, also add them to
+// the `_ESC` string in `_internal/grammar/utils.py`.
 ESC: (ESC_BACKSLASH | '\\(' | '\\)' | '\\[' | '\\]' | '\\{' | '\\}' |
       '\\:' | '\\=' | '\\,' | '\\ ' | '\\\t')+;
 WS: [ \t]+;

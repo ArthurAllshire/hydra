@@ -3,8 +3,11 @@ id: intro
 title: Introduction to Structured Configs
 sidebar_label: Introduction to Structured Configs
 ---
+
+import GithubLink from "@site/src/components/GithubLink"
+
 This is an advanced tutorial that assumes that you are comfortable with the concepts introduced in the [Basic Tutorial](/tutorials/basic/your_first_app/1_simple_cli.md).
-The examples in this tutorial are available [here](https://github.com/facebookresearch/hydra/tree/master/examples/tutorials/structured_configs).
+The examples in this tutorial are available <GithubLink to="examples/tutorials/structured_configs">here</GithubLink>.
 
 Structured Configs use Python [dataclasses](https://docs.python.org/3.7/library/dataclasses.html) to 
 describe your configuration structure and types. They enable:
@@ -33,11 +36,3 @@ This tutorial covers both. \***Read it in order**\*.
 Hydra supports OmegaConf's Structured Configs via the `ConfigStore` API.
 This tutorial does not assume any knowledge of them.
 It is recommended that you visit the <a class="external" href="https://omegaconf.readthedocs.io/en/latest/structured_config.html" target="_blank">OmegaConf Structured Configs page</a> to learn more later.
-
-
-<div class="alert alert--info" role="alert">
-1. The ConfigStore API is new and subject to change.<br/>
-2. OmegaConf's Structured Configs are new.<br/>  
-Please report any issues.<br/>
-</div>
-<br/>

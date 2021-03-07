@@ -7,8 +7,8 @@ import sys
 from pathlib import Path
 from typing import List
 
-import pytest
 from packaging import version
+from pytest import mark, param, skip
 
 from hydra._internal.config_loader_impl import ConfigLoaderImpl
 from hydra._internal.core_plugins.bash_completion import BashCompletion
@@ -45,6 +45,26 @@ def is_fish_supported() -> bool:
         return False
 
 
+def is_zsh_supported() -> bool:
+    if distutils.spawn.find_executable("zsh") is None:
+        return False
+
+    proc = subprocess.run(
+        ["zsh", "--version"], stdout=subprocess.PIPE, encoding="utf-8"
+    )
+    matches = re.match(r"zsh\s+(\d\.\d(\.\d)?)", proc.stdout)
+    if not matches:
+        return False
+
+    zsh_version = matches.groups()[0]
+
+    # Support for Bash completion functions introduced in Zsh 4.2
+    if version.parse(zsh_version) > version.parse("4.2"):
+        return True
+    else:
+        return False
+
+
 def create_config_loader() -> ConfigLoaderImpl:
     return ConfigLoaderImpl(
         config_search_path=create_config_search_path(
@@ -53,35 +73,38 @@ def create_config_loader() -> ConfigLoaderImpl:
     )
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="does not run on windows")
-class TestDotInPathCompletion:
-    def test_bash_completion_with_dot_in_path(self) -> None:
-        process = subprocess.Popen(
-            "tests/scripts/test_bash_dot_in_path.bash",
-            shell=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        stdout, stderr = process.communicate()
-        assert stderr == b""
-        assert stdout == b"TRUE\n"
-        return
+@mark.skipif(sys.platform == "win32", reason="does not run on windows")
+def test_bash_completion_with_dot_in_path() -> None:
+    process = subprocess.Popen(
+        "tests/scripts/test_bash_dot_in_path.bash",
+        shell=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={"PATH": os.environ["PATH"]},
+    )
+    stdout, stderr = process.communicate()
+    assert stderr == b""
+    assert stdout == b"TRUE\n"
+    return
 
 
 base_completion_list: List[str] = [
     "dict.",
     "dict_prefix=",
     "group=",
+    "hydra",
     "hydra.",
-    "hydra/",
     "list.",
     "list_prefix=",
     "test_hydra/",
 ]
 
 
-@pytest.mark.parametrize("line_prefix", ["", "dict.key1=val1 "])
-@pytest.mark.parametrize(
+@mark.parametrize(
+    "line_prefix",
+    [param("", id="no_prefix"), param("dict.key1=val1 ", id="prefix")],
+)
+@mark.parametrize(
     "line,num_tabs,expected",
     [
         ("", 2, base_completion_list),
@@ -110,9 +133,9 @@ base_completion_list: List[str] = [
         ("test_hydra/launcher=", 2, ["test_hydra/launcher=fairtask"]),
         ("test_hydra/launcher=fa", 2, ["test_hydra/launcher=fairtask"]),
         # loading groups
-        ("gro", 2, ["group="]),
-        ("group=di", 2, ["group=dict"]),
-        (
+        param("gro", 2, ["group="], id="group"),
+        param("group=di", 2, ["group=dict"], id="group"),
+        param(
             "group=dict ",
             3,
             [
@@ -120,18 +143,19 @@ base_completion_list: List[str] = [
                 "dict_prefix=",
                 "group.",
                 "group=",
+                "hydra",
                 "hydra.",
-                "hydra/",
                 "list.",
                 "list_prefix=",
                 "test_hydra/",
                 "toys.",
             ],
+            id="group",
         ),
-        ("group=", 2, ["group=dict", "group=list"]),
-        ("group=dict group.dict=", 2, ["group.dict=true"]),
-        ("group=dict group=", 2, ["group=dict", "group=list"]),
-        ("group=dict group=", 2, ["group=dict", "group=list"]),
+        param("group=", 2, ["group=dict", "group=list"], id="group"),
+        param("group=dict group.dict=", 2, ["group.dict=true"], id="group"),
+        param("group=dict group=", 2, ["group=dict", "group=list"], id="group"),
+        param("group=dict group=", 2, ["group=dict", "group=list"], id="group"),
     ],
 )
 class TestRunCompletion:
@@ -148,14 +172,20 @@ class TestRunCompletion:
         )
         assert ret == expected
 
-    @pytest.mark.skipif(  # type: ignore
+    @mark.skipif(
         not is_expect_exists(),
         reason="expect should be installed to run the expects tests",
     )
-    @pytest.mark.parametrize(  # type: ignore
-        "prog", [["python", "hydra/test_utils/completion.py"]]
+    @mark.parametrize("prog", [["python", "hydra/test_utils/completion.py"]])
+    @mark.parametrize(
+        "shell",
+        [
+            "bash",
+            # Temporarily disabled, see https://github.com/facebookresearch/hydra/issues/1442
+            # "fish",
+            "zsh",
+        ],
     )
-    @pytest.mark.parametrize("shell", ["bash", "fish"])  # type: ignore
     def test_shell_integration(
         self,
         shell: str,
@@ -166,12 +196,15 @@ class TestRunCompletion:
         expected: List[str],
     ) -> None:
         if shell == "fish" and not is_fish_supported():
-            pytest.skip("fish is not installed or the version is too old")
+            skip("fish is not installed or the version is too old")
+        if shell == "zsh" and not is_zsh_supported():
+            skip("zsh is not installed or the version is too old")
 
         # verify expect will be running the correct Python.
         # This preemptively detect a much harder to understand error from expect.
         ret = subprocess.check_output(
-            ["python", "-c", "import sys; print(sys.executable)"], env=os.environ
+            ["python", "-c", "import sys; print(sys.executable)"],
+            env={"PATH": os.environ["PATH"]},
         )
         assert os.path.realpath(ret.decode("utf-8").strip()) == os.path.realpath(
             sys.executable.strip()
@@ -179,16 +212,15 @@ class TestRunCompletion:
 
         verbose = os.environ.get("VERBOSE", "0") != "0"
 
-        line1 = "line={}".format(line_prefix + line)
         cmd = ["expect"]
         if verbose:
             cmd.append("-d")
 
         cmd.extend(
             [
-                "tests/scripts/test_{}_completion.exp".format(shell),
+                f"tests/scripts/test_{shell}_completion.exp",
                 f"{' '.join(prog)}",
-                line1,
+                f"line={line_prefix + line}",
                 str(num_tabs),
             ]
         )
@@ -204,25 +236,26 @@ class TestRunCompletion:
         cmd.extend(expected)
         if verbose:
             print("\nCOMMAND:\n" + " ".join([f"'{x}'" for x in cmd]))
+
         subprocess.check_call(cmd)
 
 
-@pytest.mark.parametrize(
+@mark.parametrize(
     "line,expected",
     [
-        pytest.param("", base_completion_list, id="empty_multirun"),
-        pytest.param("gro", ["group="], id="group_name"),
-        pytest.param("group", ["group="], id="group_eq"),
-        pytest.param("group=", ["group=dict", "group=list"], id="group_options"),
-        pytest.param("group=dic", ["group=dict"], id="group_option"),
-        pytest.param("group=dict", ["group=dict"], id="group_option"),
-        pytest.param("group=dict,list", [], id="multirun"),
-        pytest.param(
+        param("", base_completion_list, id="empty_multirun"),
+        param("gro", ["group="], id="group_name"),
+        param("group", ["group="], id="group_eq"),
+        param("group=", ["group=dict", "group=list"], id="group_options"),
+        param("group=dic", ["group=dict"], id="group_option"),
+        param("group=dict", ["group=dict"], id="group_option"),
+        param("group=dict,list", [], id="multirun"),
+        param(
             "group=dict dict.",
             ["dict.key1=", "dict.key2=", "dict.key3="],
             id="complete_node_from_group",
         ),
-        pytest.param(
+        param(
             "group=dict,list list.", ["list.0=", "list.1=", "list.2="], id="multirun"
         ),
         # Not currently supported.
@@ -231,9 +264,7 @@ class TestRunCompletion:
         # Concretely group=dict, is not a valid override.
         # We can't just naively split on , because of things like: key=[1,2],[3,4]
         # Supporting this is likely a significant effort to extend the grammar to parse partial overrides
-        pytest.param(
-            "group=dict,", ["group=dict,list"], id="multirun", marks=pytest.mark.xfail
-        ),
+        param("group=dict,", ["group=dict,list"], id="multirun", marks=mark.xfail),
     ],
 )
 class TestMultirunCompletion:
@@ -244,7 +275,7 @@ class TestMultirunCompletion:
         assert ret == expected
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "line,expected",
     [
         ("-c job", base_completion_list),
@@ -259,9 +290,29 @@ def test_with_flags(line: str, expected: List[str]) -> None:
     assert ret == expected
 
 
-@pytest.mark.parametrize("relative", [True, False])  # type: ignore
-@pytest.mark.parametrize("line_prefix", ["", "dict.key1=val1 "])  # type: ignore
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
+    "line,expected",
+    [
+        ("", ["group=", "hydra", "test_hydra/"]),
+        ("group=", ["group=dict", "group=list"]),
+        ("group=d", ["group=dict"]),
+        (
+            "group=dict ",
+            ["group.", "group=", "hydra", "hydra.", "test_hydra/", "toys."],
+        ),
+        ("group=dict toys.", ["toys.andy=", "toys.list.", "toys.slinky="]),
+    ],
+)
+def test_missing_default_value(line: str, expected: List[str]) -> None:
+    config_loader = create_config_loader()
+    bc = DefaultCompletionPlugin(config_loader)
+    ret = bc._query(config_name="missing_default", line=line)
+    assert ret == expected
+
+
+@mark.parametrize("relative", [True, False])
+@mark.parametrize("line_prefix", ["", "dict.key1=val1 "])
+@mark.parametrize(
     "key_eq, fname_prefix, files, expected",
     [
         ("abc=", "", ["foo.txt"], ["foo.txt"]),
@@ -311,10 +362,8 @@ def test_file_completion(
         os.chdir(pwd)
 
 
-@pytest.mark.parametrize(  # type: ignore
-    "prefix", ["", " ", "\t", "/foo/bar", " /foo/bar/"]
-)
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize("prefix", ["", " ", "\t", "/foo/bar", " /foo/bar/"])
+@mark.parametrize(
     "app_prefix",
     [
         "python foo.py",
@@ -328,7 +377,7 @@ def test_file_completion(
         "python foo.py",
     ],
 )
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "args_line, args_line_index",
     [
         ("", None),
@@ -347,12 +396,12 @@ def test_strip(
     app_prefix = prefix + app_prefix
     if args_line:
         app_prefix = app_prefix + " "
-    line = "{}{}".format(app_prefix, args_line)
+    line = f"{app_prefix}{args_line}"
     result_line = BashCompletion.strip_python_or_app_name(line)
     assert result_line == args_line
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "shell,script,comp_func",
     [
         (
@@ -369,6 +418,6 @@ def test_strip(
 )
 def test_install_uninstall(shell: str, script: str, comp_func: str) -> None:
     if shell == "fish" and not is_fish_supported():
-        pytest.skip("fish is not installed or the version is too old")
+        skip("fish is not installed or the version is too old")
     cmd = [shell, script, "python hydra/test_utils/completion.py", comp_func]
-    subprocess.check_call(cmd)
+    subprocess.check_call(cmd, env={"PATH": os.environ["PATH"]})

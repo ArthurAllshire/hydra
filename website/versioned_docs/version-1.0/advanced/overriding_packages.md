@@ -3,7 +3,7 @@ id: overriding_packages
 title: Overriding packages
 ---
 
-[![Example application](https://img.shields.io/badge/-Example%20application-informational)](https://github.com/facebookresearch/hydra/tree/master/examples/advanced/package_overrides)
+[![Example application](https://img.shields.io/badge/-Example%20application-informational)](https://github.com/facebookresearch/hydra/tree/1.0_branch/examples/advanced/package_overrides)
 
 The contents of a config file can be relocated, or replicated, within the config, via package overrides.
 
@@ -108,22 +108,6 @@ db:
     port: 3306
 ```
 </div></div>
-
-### Overriding the package via the command line
-Overriding the package for `db` specified in the defaults list from `db.dst` to `backup`: 
-```bash
-# Change the package
-$ python my_app.py db@db.dst:backup
-# Change both the package and config group option
-$ python my_app.py db@db.dst:backup=postgresql
-```
-
-Overriding the package of a config group option not in the defaults list:
-```text
-python my_app.py +webserver@prod=apache
-```
-
-For more details, see the [Command line overrides](override_grammar/basic.md) page.
 
 ### History and future of the package directive
 The primary config, named in `@hydra.main()` should not have a package directive.

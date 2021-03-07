@@ -12,14 +12,18 @@ from nox.logger import logger
 
 BASE = os.path.abspath(os.path.dirname(__file__))
 
-DEFAULT_PYTHON_VERSIONS = ["3.6", "3.7", "3.8"]
+DEFAULT_PYTHON_VERSIONS = ["3.6", "3.7", "3.8", "3.9"]
 DEFAULT_OS_NAMES = ["Linux", "MacOS", "Windows"]
 
 PYTHON_VERSIONS = os.environ.get(
     "NOX_PYTHON_VERSIONS", ",".join(DEFAULT_PYTHON_VERSIONS)
 ).split(",")
 
-PLUGINS_INSTALL_COMMANDS = (["pip", "install"], ["pip", "install", "-e"])
+INSTALL_EDITABLE_MODE = os.environ.get("INSTALL_EDITABLE_MODE", 0)
+
+INSTALL_COMMAND = (
+    ["pip", "install", "-e"] if INSTALL_EDITABLE_MODE else ["pip", "install"]
+)
 
 # Allow limiting testing to specific plugins
 # The list ['ALL'] indicates all plugins
@@ -52,6 +56,7 @@ print(f"PLUGINS\t\t\t:\t{PLUGINS}")
 print(f"SKIP_CORE_TESTS\t\t:\t{SKIP_CORE_TESTS}")
 print(f"FIX\t\t\t:\t{FIX}")
 print(f"VERBOSE\t\t\t:\t{VERBOSE}")
+print(f"INSTALL_EDITABLE_MODE\t:\t{INSTALL_EDITABLE_MODE}")
 
 
 def _upgrade_basic(session):
@@ -91,7 +96,9 @@ def pytest_args(*args):
 
 def run_pytest(session, directory=".", *args):
     pytest_cmd = pytest_args(directory, *args)
-    session.run(*pytest_cmd, silent=SILENT)
+    # silent=False to enable some output on CI
+    # (otherwise we risk no-output timeout)
+    session.run(*pytest_cmd, silent=False)
 
 
 def get_setup_python_versions(classifiers):
@@ -212,6 +219,7 @@ def lint(session):
         ".git",
         "website",
         "plugins",
+        "tools",
         ".nox",
         "hydra/grammar/gen",
         "tools/configen/example/gen",
@@ -229,6 +237,7 @@ def lint(session):
         "examples/advanced/",
         "examples/configure_hydra",
         "examples/patterns",
+        "examples/instantiate",
         "examples/tutorials/basic/your_first_hydra_app",
         "examples/tutorials/basic/running_your_hydra_app",
         "examples/tutorials/structured_configs/",
@@ -329,14 +338,9 @@ def _get_standalone_apps_dirs():
 
 
 @nox.session(python=PYTHON_VERSIONS)
-@nox.parametrize(
-    "install_cmd",
-    PLUGINS_INSTALL_COMMANDS,
-    ids=[" ".join(x) for x in PLUGINS_INSTALL_COMMANDS],
-)
-def test_core(session, install_cmd):
+def test_core(session):
     _upgrade_basic(session)
-    install_hydra(session, install_cmd)
+    install_hydra(session, INSTALL_COMMAND)
     session.install("pytest")
 
     if not SKIP_CORE_TESTS:
@@ -348,29 +352,24 @@ def test_core(session, install_cmd):
     session.log("Testing standalone apps")
     for subdir in apps:
         session.chdir(subdir)
-        session.run(*install_cmd, ".", silent=SILENT)
+        session.run(*INSTALL_COMMAND, ".", silent=SILENT)
         run_pytest(session, ".")
 
     session.chdir(BASE)
 
     test_plugins_in_directory(
         session,
-        install_cmd=install_cmd,
+        install_cmd=INSTALL_COMMAND,
         directory="examples/plugins",
         test_hydra_core=False,
     )
 
 
 @nox.session(python=PYTHON_VERSIONS)
-@nox.parametrize(
-    "install_cmd",
-    PLUGINS_INSTALL_COMMANDS,
-    ids=[" ".join(x) for x in PLUGINS_INSTALL_COMMANDS],
-)
-def test_plugins(session, install_cmd):
+def test_plugins(session):
     test_plugins_in_directory(
         session=session,
-        install_cmd=install_cmd,
+        install_cmd=INSTALL_COMMAND,
         directory="plugins",
         test_hydra_core=True,
     )
@@ -399,7 +398,11 @@ def test_plugins_in_directory(
     # Run Hydra tests to verify installed plugins did not break anything
     if test_hydra_core:
         if not SKIP_CORE_TESTS:
-            run_pytest(session, "tests")
+            # exclude test_completion for plugins tests.
+            # 1. It's tested during normal core tests.
+            # 2. it's somewhat fragile and tend to timeout in mac.
+            # 3. it's expensive and it's not worth the cost to run it for plugins as well.
+            run_pytest(session, "tests", "--ignore=tests/test_completion.py")
         else:
             session.log("Skipping Hydra core tests")
 
@@ -465,7 +468,9 @@ def test_jupyter_notebooks(session):
         session.skip(
             f"Not testing Jupyter notebook on Python {session.python}, supports [{','.join(versions)}]"
         )
-    session.install("jupyter", "nbval")
+    # pyzmq fails on Windows py 3.8
+    # https://github.com/zeromq/pyzmq/issues/1496
+    session.install("jupyter", "nbval", "pyzmq==21.0.2")
     install_hydra(session, ["pip", "install", "-e"])
     args = pytest_args(
         "--nbval", "examples/jupyter_notebooks/compose_configs_in_notebook.ipynb"
@@ -481,3 +486,12 @@ def test_jupyter_notebooks(session):
         args = pytest_args("--nbval", str(notebook))
         args = [x for x in args if x != "-Werror"]
         session.run(*args, silent=SILENT)
+
+
+@nox.session(python=PYTHON_VERSIONS)
+def benchmark(session):
+    _upgrade_basic(session)
+    install_dev_deps(session)
+    install_hydra(session, INSTALL_COMMAND)
+    session.install("pytest")
+    run_pytest(session, "build_helpers", "tests/benchmark.py", *session.posargs)

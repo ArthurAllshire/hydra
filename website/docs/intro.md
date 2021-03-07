@@ -3,6 +3,7 @@ id: intro
 title: Getting started
 sidebar_label: Getting started
 ---
+
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import Link from '@docusaurus/Link';
 
@@ -99,16 +100,14 @@ defaults:
 `defaults` is a special directive telling Hydra to use db/mysql.yaml when composing the configuration object.
 The resulting cfg object is a composition of configs from defaults with configs specified in your `config.yaml`.
 
-You can now choose which database configuration to use from the and override values from the command line: 
+You can now choose which database configuration to use and override values from the command line: 
 ```yaml
 $ python my_app.py db=postgresql db.timeout=20
 db:
   driver: postgresql
   pass: drowssap
   timeout: 20
-  user: postgre_user
-website:
-  domain: example.com
+  user: postgres_user
 ```
 You can have as many config groups as you need.
 
@@ -125,17 +124,13 @@ db:
   driver: mysql
   pass: secret
   user: omry
-website:
-    domain: example.com
 
 [HYDRA]        #1 : db=postgresql
 db:
   driver: postgresql
   pass: drowssap
   timeout: 10
-  user: postgre_user
-website:
-    domain: example.com
+  user: postgres_user
 ```
 
 There is a whole lot more to Hydra. Read the [tutorial](tutorials/basic/your_first_app/1_simple_cli.md) to learn more.

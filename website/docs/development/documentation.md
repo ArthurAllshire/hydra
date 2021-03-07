@@ -4,8 +4,10 @@ title: Documentation
 sidebar_label: Documentation
 ---
 
+import GithubLink from "@site/src/components/GithubLink"
+
 ## NEWS Entries
-The [`NEWS.md`](https://github.com/facebookresearch/hydra/blob/master/NEWS.md) file is managed using `towncrier` and all non-trivial changes
+The <GithubLink to="NEWS.md">NEWS.md</GithubLink> file is managed using `towncrier` and all non-trivial changes
 must be accompanied by a news entry.
 
 To add an entry to the news file, first, you need to have created an issue
@@ -14,12 +16,13 @@ such, but it is preferred to have a dedicated issue (for example, in case the
 PR ends up rejected due to code quality reasons).
 
 Once you have an issue or pull request, you take the number, and you create a
-file inside the ``news/`` directory named after that issue number with one of the following extensions:
+file inside the ``news/`` directory (in case the change is directly related to Hydra)
+or in the ``news/`` directory of the relevant plugin. The file is named after the
+issue number with one of the following extensions:
 * `api_change` : API Change (Renames, deprecations, and removals)
 * `feature` : Addition of a new feature
 * `bugfix` : Fixing of a bug
 * `docs` : Addition or updates to documentation
-* `plugin` : Addition of changes to a plugin
 * `config` : Changes or addition to the configuration structure
 * `maintenance` : Changes that improve the maintainability of the code
 
@@ -65,4 +68,4 @@ $ yarn start
 
 This command starts a local development server and opens up a browser window. Most changes are reflected live without having to restart the server.
 
-For more details, refer [here](https://github.com/facebookresearch/hydra/blob/master/website/README.md).
+For more details, refer <GithubLink to="website/README.md">here</GithubLink>.

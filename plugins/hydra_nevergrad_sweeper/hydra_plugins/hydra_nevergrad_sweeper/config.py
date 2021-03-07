@@ -42,11 +42,11 @@ class OptimConf:
     #   - "CMA" very good algorithm, but may require a significant budget (> 120)
     #   - "TwoPointsDE": an algorithm good in a wide range of settings, for significant
     #     budgets (> 120).
-    #   - "Shiwa" an algorithm aiming at identifying the best optimizer given your input
-    #     definition (work in progress, it may still be ill-suited for low budget)
+    #   - "NGOpt" an algorithm aiming at identifying the best optimizer given your input
+    #     definition (updated regularly)
     # find out more within nevergrad's documentation:
     # https://github.com/facebookresearch/nevergrad/
-    optimizer: str = "OnePlusOne"
+    optimizer: str = "NGOpt"
 
     # total number of function evaluations to perform
     budget: int = 80
@@ -66,7 +66,9 @@ class OptimConf:
 
 @dataclass
 class NevergradSweeperConf:
-    _target_: str = "hydra_plugins.hydra_nevergrad_sweeper.core.NevergradSweeper"
+    _target_: str = (
+        "hydra_plugins.hydra_nevergrad_sweeper.nevergrad_sweeper.NevergradSweeper"
+    )
 
     # configuration of the optimizer
     optim: OptimConf = OptimConf()
@@ -77,9 +79,6 @@ class NevergradSweeperConf:
     # - as a list, for categorical variables
     # - as a full scalar specification
     parametrization: Dict[str, Any] = field(default_factory=dict)
-
-    # version of the commandline API
-    version: int = 1
 
 
 ConfigStore.instance().store(

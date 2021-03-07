@@ -1,14 +1,16 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-import re
 from pathlib import Path
+from textwrap import dedent
 from typing import Any, List
 
-import pytest
+from omegaconf import OmegaConf
+from pytest import mark, param
 
 from hydra.test_utils.test_utils import (
     TTaskRunner,
+    assert_text_same,
     chdir_hydra_root,
-    get_run_output,
+    run_python_script,
     run_with_error,
     verify_dir_outputs,
 )
@@ -34,38 +36,6 @@ def test_specializing_config_example(
         verify_dir_outputs(task.job_ret, overrides=task.overrides)
 
 
-@pytest.mark.parametrize(  # type: ignore
-    "overrides,output",
-    [
-        ([], "MySQL connecting to localhost"),
-        (["db=postgresql"], "PostgreSQL connecting to localhost"),
-    ],
-)
-def test_instantiate_objects_example(
-    monkeypatch: Any, tmpdir: Path, overrides: List[str], output: str
-) -> None:
-    monkeypatch.chdir("examples/patterns/instantiate_objects/")
-    cmd = ["my_app.py", "hydra.run.dir=" + str(tmpdir)] + overrides
-    result, _err = get_run_output(cmd)
-    assert result == output
-
-
-@pytest.mark.parametrize(  # type: ignore
-    "overrides,output",
-    [
-        ([], "MySQL connecting to localhost"),
-        (["db=postgresql"], "PostgreSQL connecting to localhost"),
-    ],
-)
-def test_instantiate_structured_config_example(
-    monkeypatch: Any, tmpdir: Path, overrides: List[str], output: str
-) -> None:
-    monkeypatch.chdir("examples/patterns/instantiate_structured_config/")
-    cmd = ["my_app.py", "hydra.run.dir=" + str(tmpdir)] + overrides
-    result, _err = get_run_output(cmd)
-    assert result == output
-
-
 def test_write_protect_config_node(tmpdir: Any) -> None:
     cmd = [
         "examples/patterns/write_protect_config_node/frozen.py",
@@ -73,5 +43,135 @@ def test_write_protect_config_node(tmpdir: Any) -> None:
         "data_bits=10",
     ]
 
+    expected = dedent(
+        """\
+        Error merging override data_bits=10
+        Cannot change read-only config container
+            full_key: data_bits
+            object_type=SerialPort
+
+        Set the environment variable HYDRA_FULL_ERROR=1 for a complete stack trace.
+        """
+    )
     err = run_with_error(cmd)
-    assert re.search(re.escape("Error merging override data_bits=10"), err) is not None
+    assert_text_same(from_line=expected, to_line=err)
+
+
+@mark.parametrize(
+    "overrides",
+    [
+        param(["db=mysql_extending_from_this_group"], id="from_same_group"),
+        param(["db=mysql_extending_from_another_group"], id="from_different_group"),
+    ],
+)
+def test_extending_configs(
+    monkeypatch: Any, tmpdir: Path, overrides: List[str]
+) -> None:
+    monkeypatch.chdir("examples/patterns/extending_configs")
+    cmd = ["my_app.py", "hydra.run.dir=" + str(tmpdir)] + overrides
+    result, _err = run_python_script(cmd)
+    assert OmegaConf.create(result) == {
+        "db": {
+            "host": "localhost",
+            "port": 3307,
+            "user": "omry",
+            "password": "secret",
+            "encoding": "utf8",
+        }
+    }
+
+
+@mark.parametrize(
+    ("overrides", "expected"),
+    [
+        param(
+            [],
+            {"db": {"name": "mysql"}, "server": {"name": "apache", "port": 80}},
+            id="default",
+        ),
+        param(
+            ["+experiment=nglite"],
+            {"db": {"name": "sqlite"}, "server": {"name": "nginx", "port": 8080}},
+            id="exp1",
+        ),
+        param(
+            ["+experiment=nglite", "server=apache"],
+            {"db": {"name": "sqlite"}, "server": {"name": "apache", "port": 8080}},
+            id="exp1+override",
+        ),
+    ],
+)
+def test_configuring_experiments(
+    monkeypatch: Any, tmpdir: Path, overrides: List[str], expected: Any
+) -> None:
+    monkeypatch.chdir("examples/patterns/configuring_experiments")
+    cmd = ["my_app.py", "hydra.run.dir=" + str(tmpdir)] + overrides
+    result, _err = run_python_script(cmd)
+    assert OmegaConf.create(result) == expected
+
+
+@mark.parametrize(
+    ("overrides", "expected"),
+    [
+        param(
+            [],
+            {
+                "server": {
+                    "site": {
+                        "fb": {"domain": "facebook.com"},
+                        "google": {"domain": "google.com"},
+                    },
+                    "host": "localhost",
+                    "port": 443,
+                }
+            },
+            id="default",
+        ),
+        param(
+            ["server/site=[amazon,google]"],
+            {
+                "server": {
+                    "site": {
+                        "amazon": {"domain": "amazon.com"},
+                        "google": {"domain": "google.com"},
+                    },
+                    "host": "localhost",
+                    "port": 443,
+                }
+            },
+            id="default:override",
+        ),
+        param(
+            ["server=apache_https"],
+            {
+                "server": {
+                    "https": {
+                        "fb": {"domain": "facebook.com"},
+                        "google": {"domain": "google.com"},
+                    },
+                    "host": "localhost",
+                    "port": 443,
+                }
+            },
+            id="pkg_override",
+        ),
+        param(
+            ["server=apache_https", "server/site@server.https=amazon"],
+            {
+                "server": {
+                    "https": {"amazon": {"domain": "amazon.com"}},
+                    "host": "localhost",
+                    "port": 443,
+                }
+            },
+            id="pkg_override:override",
+        ),
+    ],
+)
+def test_multi_select(
+    monkeypatch: Any, tmpdir: Path, overrides: List[str], expected: Any
+) -> None:
+    monkeypatch.chdir("examples/patterns/multi-select")
+    cmd = ["my_app.py", "hydra.run.dir=" + str(tmpdir)] + overrides
+    result, _err = run_python_script(cmd)
+    assert OmegaConf.create(result) == expected

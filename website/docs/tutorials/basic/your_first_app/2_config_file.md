@@ -3,10 +3,13 @@ id: config_file
 title: Specifying a config file
 ---
 
-[![Example](https://img.shields.io/badge/-Example-informational)](https://github.com/facebookresearch/hydra/tree/master/examples/tutorials/basic/your_first_hydra_app/2_config_file)
+import {ExampleGithubLink} from "@site/src/components/GithubLink"
 
-It can get tedious to type all those command line arguments.
-One solution is to create a configuration file in YAML format and place it next to `my_app.py`.
+<ExampleGithubLink to="examples/tutorials/basic/your_first_hydra_app/2_config_file"/>
+
+It can get tedious to type all those command line arguments. 
+You can solve it by creating a configuration file next to my_app.py.
+Hydra configuration files are yaml files and should have the .yaml file extension.
 
 ```yaml title="config.yaml"
 db: 
@@ -40,6 +43,17 @@ db:
   driver: mysql
   user: root
   password: 1234
+```
+
+
+Use `++` to override a config value if it's already in the config, or add it otherwise.
+e.g:
+```shell
+# Override an existing item
+$ python my_app.py ++db.password=1234
+
+# Add a new item
+$ python my_app.py ++db.timeout=5
 ```
 
 You can enable [tab completion](/tutorials/basic/running_your_app/6_tab_completion.md) for your Hydra applications.

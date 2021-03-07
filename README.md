@@ -13,7 +13,7 @@
   <a href="#">
     <img src="https://img.shields.io/pypi/pyversions/hydra-core" alt="PyPI - Python Version" />
   </a>
-  <a href="https://pepy.tech/project/hydra-core/month?versions=0.11.*&versions=1.0.*">
+  <a href="https://pepy.tech/project/hydra-core?versions=0.11.*&versions=1.0.*&versions=1.1.*">
     <img src="https://pepy.tech/badge/hydra-core/month" alt="Downloads" />
   </a>
   <a href="https://github.com/psf/black">
@@ -46,6 +46,15 @@
 **Hydra 1.0** is the stable version of Hydra.
 - [Documentation](https://hydra.cc/docs/intro)
 - Installation : `pip install hydra-core --upgrade`
+
+#### Development release
+**Hydra 1.1** is still in active development and should not be considered stable.
+You are welcome to try it out at your own risk and report any issues.
+
+- [Documentation](https://hydra.cc/docs/next/intro)
+- Installation : `pip install hydra-core --upgrade --pre`
+- Dev releases are more likely to have bugs, please report any issues.
+- APIs and behaviors are subject to change without notice between different dev releases.
 
 ### License
 Hydra is licensed under [MIT License](LICENSE).

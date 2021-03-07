@@ -7,8 +7,8 @@ sidebar_label: RQ Launcher plugin
 ![PyPI - License](https://img.shields.io/pypi/l/hydra-rq-launcher)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/hydra-rq-launcher)
 [![PyPI - Downloads](https://img.shields.io/pypi/dm/hydra-rq-launcher.svg)](https://pypistats.org/packages/hydra-rq-launcher)
-[![Example application](https://img.shields.io/badge/-Example%20application-informational)](https://github.com/facebookresearch/hydra/tree/master/plugins/hydra_rq_launcher/example)
-[![Plugin source](https://img.shields.io/badge/-Plugin%20source-informational)](https://github.com/facebookresearch/hydra/tree/master/plugins/hydra_rq_launcher)
+[![Example application](https://img.shields.io/badge/-Example%20application-informational)](https://github.com/facebookresearch/hydra/tree/1.0_branch/plugins/hydra_rq_launcher/example)
+[![Plugin source](https://img.shields.io/badge/-Plugin%20source-informational)](https://github.com/facebookresearch/hydra/tree/1.0_branch/plugins/hydra_rq_launcher)
 
 The RQ Launcher plugin provides a launcher for distributed execution and job queuing based on [Redis Queue (RQ)](https://python-rq.org).
 
@@ -72,7 +72,7 @@ Assuming configured environment variables, workers connecting to the Redis serve
 rq worker --url redis://:$REDIS_PASSWORD@$REDIS_HOST:$REDIS_PORT/$REDIS_DB
 ```
 
-An [example application](https://github.com/facebookresearch/hydra/tree/master/plugins/hydra_rq_launcher/example) using this launcher is provided in the plugin repository.
+An [example application](https://github.com/facebookresearch/hydra/tree/1.0_branch/plugins/hydra_rq_launcher/example) using this launcher is provided in the plugin repository.
 
 Starting the app with `python my_app.py --multirun task=1,2,3,4,5` will enqueue five jobs to be processed by worker instances:
 
@@ -94,5 +94,7 @@ $ python my_app.py --multirun task=1,2,3,4,5
 [HYDRA] Finished enqueuing
 [HYDRA] Polling job statuses every 1.0 sec
 ```
+
+Note that any dependencies need to be installed in the Python environment used to run the RQ worker. For serialization of jobs [`cloudpickle`](https://github.com/cloudpickle/cloudpickle) is used.
 
 The [RQ documentation](https://python-rq.org/) holds further information on [job monitoring](http://python-rq.org/docs/monitoring/), which can be done via console or [web interfaces](https://github.com/nvie/rq-dashboard), and provides [patterns](https://python-rq.org/patterns/) for worker and exception handling.

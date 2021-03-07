@@ -4,7 +4,6 @@ This plugin provides an example for how to write a custom Launcher for Hydra.
 The configuration for this launcher is in packages with the plugin:
 
 ```yaml title="hydra_plugins/example_launcher_plugiun/conf/hydra/launcher/example.yaml"
-# @package _group_
 _target_: hydra_plugins.example_launcher_plugin.example_launcher.ExampleLauncher
 foo: 10
 bar: abcde
@@ -22,7 +21,7 @@ db:
   driver: postgresql
   pass: drowssap
   timeout: 10
-  user: postgre_user
+  user: postgres_user
 
 [2019-10-22 19:45:05,135] -     #1 : db=mysql
 db:

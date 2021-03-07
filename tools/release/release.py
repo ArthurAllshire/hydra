@@ -9,13 +9,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List, Tuple
 
+import hydra
 import requests
+from hydra.core.config_store import ConfigStore
+from hydra.test_utils.test_utils import find_parent_dir_containing, run_python_script
 from omegaconf import MISSING, DictConfig, OmegaConf
 from packaging.version import Version, parse
-
-import hydra
-from hydra.core.config_store import ConfigStore
-from hydra.test_utils.test_utils import find_parent_dir_containing, get_run_output
 
 log = logging.getLogger(__name__)
 HYDRA_ROOT = find_parent_dir_containing(target="ATTRIBUTION")
@@ -88,9 +87,13 @@ def get_package_info(path: str) -> Package:
     try:
         prev = os.getcwd()
         os.chdir(path)
-        out, _err = get_run_output(cmd=[f"{path}/setup.py", "--version"])
+        out, _err = run_python_script(
+            cmd=[f"{path}/setup.py", "--version"], allow_warnings=True
+        )
         local_version: Version = parse_version(out)
-        package_name, _err = get_run_output(cmd=[f"{path}/setup.py", "--name"])
+        package_name, _err = run_python_script(
+            cmd=[f"{path}/setup.py", "--name"], allow_warnings=True
+        )
     finally:
         os.chdir(prev)
 
@@ -107,7 +110,7 @@ def build_package(cfg: Config, pkg_path: str) -> None:
         os.chdir(pkg_path)
         log.info(f"Building {get_package_info('.').name}")
         shutil.rmtree("dist", ignore_errors=True)
-        get_run_output(
+        run_python_script(
             cmd=["setup.py", "build", *cfg.build_targets], allow_warnings=True
         )
     finally:
@@ -120,13 +123,13 @@ def build_package(cfg: Config, pkg_path: str) -> None:
 
 def _next_version(version: str) -> str:
     cur = parse(version)
-    if cur.is_prerelease:
+    if cur.is_devrelease:
+        prefix = "dev"
+        num = cur.dev + 1
+        new_version = f"{cur.major}.{cur.minor}.{cur.micro}{prefix}{num}"
+    elif cur.is_prerelease:
         prefix = cur.pre[0]
         num = cur.pre[1] + 1
-        new_version = f"{cur.major}.{cur.minor}.{cur.micro}{prefix}{num}"
-    elif cur.is_devrelease:
-        prefix = cur.dev[0]
-        num = cur.dev[1] + 1
         new_version = f"{cur.major}.{cur.minor}.{cur.micro}{prefix}{num}"
     elif cur.is_postrelease:
         prefix = cur.post[0]

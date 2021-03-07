@@ -2,17 +2,20 @@
 import copy
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional, Tuple
 
-import pytest
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import MISSING, DictConfig, ListConfig, OmegaConf
+from pytest import fixture, mark, param, raises, warns
 
+import hydra._internal.instantiate._instantiate2
+import tests
 from hydra import utils
 from hydra.conf import HydraConf, RuntimeConf
 from hydra.core.hydra_config import HydraConfig
-from hydra.errors import HydraException, InstantiationException
-from hydra.types import ObjectConf
+from hydra.errors import InstantiationException
+from hydra.types import ConvertMode, TargetConf
 from tests import (
     AClass,
     Adam,
@@ -20,145 +23,194 @@ from tests import (
     AnotherClass,
     ASubclass,
     BadAdamConf,
+    BClass,
+    CenterCrop,
+    CenterCropConf,
+    Compose,
+    ComposeConf,
     IllegalType,
+    Mapping,
+    MappingConf,
+    NestedConf,
     NestingClass,
     Parameters,
-)
-
-objectconf_depreacted = (
-    "\nObjectConf is deprecated in favor of TargetConf since Hydra 1.0.0rc3 and will be removed in Hydra 1.1."
-    "\nSee https://hydra.cc/docs/next/upgrades/0.11_to_1.0/object_instantiation_changes"
-)
-
-target_field_deprecated = (
-    "\nConfig key '{field}' is deprecated since Hydra 1.0 and will be removed in Hydra 1.1."
-    "\nUse '_target_' instead of '{field}'."
-    "\nSee https://hydra.cc/docs/next/upgrades/0.11_to_1.0/object_instantiation_changes"
-)
-
-params_field_deprecated = (
-    "\nField 'params' is deprecated since Hydra 1.0 and will be removed in Hydra 1.1."
-    "\nInline the content of params directly at the containing node."
-    "\nSee https://hydra.cc/docs/next/upgrades/0.11_to_1.0/object_instantiation_changes"
+    Rotation,
+    RotationConf,
+    SimpleClass,
+    SimpleClassDefaultPrimitiveConf,
+    SimpleClassNonPrimitiveConf,
+    SimpleClassPrimitiveConf,
+    SimpleDataClass,
+    Tree,
+    TreeConf,
+    UntypedPassthroughClass,
+    UntypedPassthroughConf,
+    User,
+    recisinstance,
 )
 
 
-@pytest.mark.parametrize(  # type: ignore
-    "path,expected_type", [("tests.AClass", AClass)]
+@fixture(
+    params=[
+        hydra._internal.instantiate._instantiate2.instantiate,
+    ],
+    ids=[
+        "instantiate2",
+    ],
 )
+def instantiate_func(request: Any) -> Any:
+    return request.param
+
+
+@fixture(
+    params=[
+        lambda cfg: copy.deepcopy(cfg),
+        lambda cfg: OmegaConf.create(cfg),
+    ],
+    ids=[
+        "dict",
+        "dict_config",
+    ],
+)
+def config(request: Any, src: Any) -> Any:
+    config = request.param(src)
+    cfg_copy = copy.deepcopy(config)
+    yield config
+    assert config == cfg_copy
+
+
+@mark.parametrize("path,expected_type", [("tests.AClass", AClass)])
 def test_get_class(path: str, expected_type: type) -> None:
     assert utils.get_class(path) == expected_type
 
 
-@pytest.mark.parametrize(  # type: ignore
-    "input_conf, passthrough, expected",
+@mark.parametrize(
+    "recursive", [param(False, id="not_recursive"), param(True, id="recursive")]
+)
+@mark.parametrize(
+    "src, passthrough, expected",
     [
-        pytest.param(
+        param(
             {"_target_": "tests.AClass", "a": 10, "b": 20, "c": 30, "d": 40},
             {},
             AClass(10, 20, 30, 40),
             id="class",
         ),
-        pytest.param(
+        param(
             {"_target_": "tests.AClass", "b": 20, "c": 30},
             {"a": 10, "d": 40},
             AClass(10, 20, 30, 40),
             id="class+override",
         ),
-        pytest.param(
+        param(
             {"_target_": "tests.AClass", "b": 200, "c": "${b}"},
             {"a": 10, "b": 99, "d": 40},
             AClass(10, 99, 99, 40),
             id="class+override+interpolation",
         ),
         # Check class and static methods
-        pytest.param(
+        param(
             {"_target_": "tests.ASubclass.class_method", "y": 10},
             {},
             ASubclass(11),
             id="class_method",
         ),
-        pytest.param(
+        param(
             {"_target_": "tests.AClass.static_method", "z": 43},
             {},
             43,
             id="static_method",
         ),
         # Check nested types and static methods
-        pytest.param(
+        param(
             {"_target_": "tests.NestingClass"},
             {},
             NestingClass(ASubclass(10)),
             id="class_with_nested_class",
         ),
-        pytest.param(
+        param(
             {"_target_": "tests.nesting.a.class_method", "y": 10},
             {},
             ASubclass(11),
             id="class_method_on_an_object_nested_in_a_global",
         ),
-        pytest.param(
+        param(
             {"_target_": "tests.nesting.a.static_method", "z": 43},
             {},
             43,
             id="static_method_on_an_object_nested_in_a_global",
         ),
         # Check that default value is respected
-        pytest.param(
+        param(
             {"_target_": "tests.AClass"},
             {"a": 10, "b": 20, "c": 30},
             AClass(10, 20, 30, "default_value"),
             id="instantiate_respects_default_value",
         ),
         # call a function from a module
-        pytest.param(
+        param(
             {"_target_": "tests.module_function", "x": 43},
             {},
             43,
             id="call_function_in_module",
         ),
         # Check builtins
-        pytest.param(
+        param(
             {"_target_": "builtins.str", "object": 43},
             {},
             "43",
             id="builtin_types",
         ),
         # Check that none is instantiated correctly
-        pytest.param(None, {}, None, id="instantiate_none"),
+        param(None, {}, None, id="instantiate_none"),
         # passthrough
-        pytest.param(
+        param(
             {"_target_": "tests.AClass"},
             {"a": 10, "b": 20, "c": 30},
             AClass(a=10, b=20, c=30),
             id="passthrough",
         ),
-        pytest.param(
+        param(
             {"_target_": "tests.AClass"},
             {"a": 10, "b": 20, "c": 30, "d": {"x": IllegalType()}},
             AClass(a=10, b=20, c=30, d={"x": IllegalType()}),
-            id="passthrough",
+            id="oc_incompatible_passthrough",
+        ),
+        param(
+            {"_target_": "tests.AClass"},
+            {
+                "a": 10,
+                "b": 20,
+                "c": 30,
+                "d": {"x": [10, IllegalType()]},
+            },
+            AClass(a=10, b=20, c=30, d={"x": [10, IllegalType()]}),
+            id="passthrough:list",
+        ),
+        param(
+            UntypedPassthroughConf,
+            {"a": IllegalType()},
+            UntypedPassthroughClass(a=IllegalType()),
+            id="untyped_passthrough",
         ),
     ],
 )
 def test_class_instantiate(
-    input_conf: Any, passthrough: Dict[str, Any], expected: Any
+    instantiate_func: Any,
+    config: Any,
+    passthrough: Dict[str, Any],
+    expected: Any,
+    recursive: bool,
 ) -> Any:
-    def test(conf: Any) -> None:
-        conf_copy = copy.deepcopy(conf)
-        obj = utils.instantiate(conf, **passthrough)
-        assert obj == expected
-        # make sure config is not modified by instantiate
-        assert conf == conf_copy
-
-    test(input_conf)
-    test(OmegaConf.create(input_conf))
+    passthrough["_recursive_"] = recursive
+    obj = instantiate_func(config, **passthrough)
+    assert obj == expected
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "input_conf, passthrough, expected",
     [
-        pytest.param(
+        param(
             {
                 "node": {
                     "_target_": "tests.AClass",
@@ -173,97 +225,63 @@ def test_class_instantiate(
             AClass(99, 20, 30, 40),
             id="interpolation_into_parent",
         ),
+        param(
+            {
+                "A": {"_target_": "tests.add_values", "a": 1, "b": 2},
+                "node": {"_target_": "tests.add_values", "a": "${A}", "b": 3},
+            },
+            {},
+            6,
+            id="interpolation_from_recursive",
+        ),
     ],
 )
 def test_interpolation_accessing_parent(
-    input_conf: Any, passthrough: Dict[str, Any], expected: Any
+    instantiate_func: Any, input_conf: Any, passthrough: Dict[str, Any], expected: Any
 ) -> Any:
+    cfg_copy = OmegaConf.create(input_conf)
     input_conf = OmegaConf.create(input_conf)
-    obj = utils.instantiate(input_conf.node, **passthrough)
+    obj = instantiate_func(input_conf.node, **passthrough)
     assert obj == expected
+    assert input_conf == cfg_copy
 
 
-@pytest.mark.parametrize(  # type: ignore
-    "input_conf, passthrough, expected",
-    [
-        pytest.param(
-            {"_target_": "tests.AClass", "params": {"b": 200, "c": "${params.b}"}},
-            {"a": 10},
-            AClass(10, 200, 200, "default_value"),
-            id="instantiate_respects_default_value",
-        )
-    ],
+def test_interpolation_is_live_in_instantiated_object(instantiate_func: Any) -> None:
+    """
+    Interpolations in instantiated objects are live config objects but not for primitive objects.
+    """
+    cfg = OmegaConf.create(
+        {
+            "node": {
+                "_target_": "tests.AClass",
+                "a": "${value}",
+                "b": {"x": "${value}"},
+                "c": 30,
+                "d": 40,
+            },
+            "value": 99,
+        }
+    )
+    obj = instantiate_func(cfg.node)
+    assert obj.a == 99
+    assert obj.b.x == 99
+
+    cfg.value = 3.14
+
+    # interpolation is not live for primitive objects
+    assert obj.a == 99  # unchanged
+    # but is live for config objects
+    assert obj.b.x == 3.14
+
+
+@mark.parametrize(
+    "src",
+    [({"_target_": "tests.AClass", "b": 200, "c": {"x": 10, "y": "${b}"}})],
 )
-def test_instantiate_respects_default_value_with_params(
-    input_conf: Any, passthrough: Dict[str, Any], expected: Any, recwarn: Any
-) -> Any:
-    conf = OmegaConf.create(input_conf)
-    assert isinstance(conf, DictConfig)
-    conf_copy = copy.deepcopy(conf)
-    obj = utils.instantiate(conf, **passthrough)
-    assert obj == expected
-    # make sure config is not modified by instantiate
-    assert conf == conf_copy
-
-
-def test_class_instantiate_objectconf_pass_omegaconf_node() -> Any:
-    with pytest.warns(expected_warning=UserWarning) as recwarn:
-        conf = OmegaConf.structured(
-            ObjectConf(
-                target="tests.AClass",
-                params={"b": 200, "c": {"x": 10, "y": "${params.b}"}},
-            )
-        )
-        obj = utils.instantiate(conf, **{"a": 10, "d": AnotherClass(99)})
-    assert obj == AClass(10, 200, {"x": 10, "y": 200}, AnotherClass(99))
+def test_class_instantiate_omegaconf_node(instantiate_func: Any, config: Any) -> Any:
+    obj = instantiate_func(config, a=10, d=AnotherClass(99))
+    assert obj == AClass(a=10, b=200, c={"x": 10, "y": 200}, d=AnotherClass(99))
     assert OmegaConf.is_config(obj.c)
-
-    assert recwarn[0].message.args[0] == objectconf_depreacted
-    assert recwarn[1].message.args[0] == target_field_deprecated.format(field="target")
-
-
-def test_class_instantiate_omegaconf_node() -> Any:
-    conf = OmegaConf.structured(
-        {"_target_": "tests.AClass", "b": 200, "c": {"x": 10, "y": "${params.b}"}}
-    )
-    obj = utils.instantiate(conf, **{"a": 10, "d": AnotherClass(99)})
-    assert obj == AClass(10, 200, {"x": 10, "y": 200}, AnotherClass(99))
-    assert OmegaConf.is_config(obj.c)
-
-
-def test_instantiate_deprecations() -> None:
-    expected = AClass(10, 20, 30, 40)
-    with pytest.warns(UserWarning, match=target_field_deprecated.format(field="class")):
-        config = OmegaConf.structured(
-            {"class": "tests.AClass", "params": {"a": 10, "b": 20, "c": 30, "d": 40}}
-        )
-        assert utils.instantiate(config) == expected
-
-    with pytest.warns(UserWarning, match=target_field_deprecated.format(field="cls")):
-        config = OmegaConf.structured(
-            {"cls": "tests.AClass", "params": {"a": 10, "b": 20, "c": 30, "d": 40}}
-        )
-        assert utils.instantiate(config) == expected
-
-    with pytest.warns(
-        UserWarning, match=target_field_deprecated.format(field="target")
-    ):
-        config = OmegaConf.structured(
-            {"target": "tests.AClass", "params": {"a": 10, "b": 20, "c": 30, "d": 40}}
-        )
-        assert utils.instantiate(config) == expected
-
-    with pytest.warns(UserWarning, match=params_field_deprecated):
-        config = OmegaConf.structured(
-            {"_target_": "tests.AClass", "params": {"a": 10, "b": 20, "c": 30, "d": 40}}
-        )
-        assert utils.instantiate(config) == expected
-
-    # normal case, no warnings
-    config = OmegaConf.structured(
-        {"_target_": "tests.AClass", "a": 10, "b": 20, "c": 30, "d": 40}
-    )
-    assert utils.instantiate(config) == expected
 
 
 def test_get_original_cwd(hydra_restore_singletons: Any) -> None:
@@ -275,11 +293,11 @@ def test_get_original_cwd(hydra_restore_singletons: Any) -> None:
 
 
 def test_get_original_cwd_without_hydra(hydra_restore_singletons: Any) -> None:
-    with pytest.raises(ValueError):
+    with raises(ValueError):
         utils.get_original_cwd()
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "orig_cwd, path, expected",
     [
         ("/home/omry/hydra", "foo/bar", "/home/omry/hydra/foo/bar"),
@@ -300,7 +318,7 @@ def test_to_absolute_path(
     assert utils.to_absolute_path(path) == expected
 
 
-@pytest.mark.parametrize(  # type: ignore
+@mark.parametrize(
     "path, expected",
     [
         ("foo/bar", f"{os.getcwd()}/foo/bar"),
@@ -317,220 +335,986 @@ def test_to_absolute_path_without_hydra(
     assert utils.to_absolute_path(path) == expected
 
 
-def test_instantiate_adam_objectconf() -> None:
-    with pytest.warns(expected_warning=UserWarning, match=objectconf_depreacted):
-        with pytest.raises(Exception):
-            # can't instantiate without passing params
-            utils.instantiate(ObjectConf(target="tests.Adam"))
-
-        adam_params = Parameters([1, 2, 3])
-        res = utils.instantiate(ObjectConf(target="tests.Adam"), params=adam_params)
-        assert res == Adam(params=adam_params)
-
-
-def test_instantiate_adam() -> None:
-    with pytest.raises(Exception):
+@mark.parametrize("src", [{"_target_": "tests.Adam"}])
+def test_instantiate_adam(instantiate_func: Any, config: Any) -> None:
+    with raises(Exception):
         # can't instantiate without passing params
-        utils.instantiate({"_target_": "tests.Adam"})
+        instantiate_func(config)
 
     adam_params = Parameters([1, 2, 3])
-    res = utils.instantiate({"_target_": "tests.Adam"}, params=adam_params)
+    res = instantiate_func(config, params=adam_params)
     assert res == Adam(params=adam_params)
 
 
-def test_instantiate_adam_conf() -> None:
-    with pytest.raises(Exception):
+def test_instantiate_adam_conf(instantiate_func: Any) -> None:
+    with raises(Exception):
         # can't instantiate without passing params
-        utils.instantiate({"_target_": "tests.Adam"})
+        instantiate_func({"_target_": "tests.Adam"})
 
     adam_params = Parameters([1, 2, 3])
-    res = utils.instantiate(AdamConf(lr=0.123), params=adam_params)
-    assert res == Adam(lr=0.123, params=adam_params)
+    res = instantiate_func(AdamConf(lr=0.123), params=adam_params)
+    expected = Adam(lr=0.123, params=adam_params)
+    assert res.params == expected.params
+    assert res.lr == expected.lr
+    assert list(res.betas) == list(expected.betas)  # OmegaConf converts tuples to lists
+    assert res.eps == expected.eps
+    assert res.weight_decay == expected.weight_decay
+    assert res.amsgrad == expected.amsgrad
 
 
-def test_instantiate_bad_adam_conf() -> None:
+def test_instantiate_adam_conf_with_convert(instantiate_func: Any) -> None:
+    adam_params = Parameters([1, 2, 3])
+    res = instantiate_func(AdamConf(lr=0.123), params=adam_params, _convert_="all")
+    expected = Adam(lr=0.123, params=adam_params)
+    assert res.params == expected.params
+    assert res.lr == expected.lr
+    assert isinstance(res.betas, list)
+    assert list(res.betas) == list(expected.betas)  # OmegaConf converts tuples to lists
+    assert res.eps == expected.eps
+    assert res.weight_decay == expected.weight_decay
+    assert res.amsgrad == expected.amsgrad
+
+
+def test_targetconf_deprecated() -> None:
+    with warns(
+        expected_warning=UserWarning,
+        match=re.escape(
+            "TargetConf is deprecated since Hydra 1.1 and will be removed in Hydra 1.2."
+        ),
+    ):
+        TargetConf()
+
+
+def test_instantiate_bad_adam_conf(instantiate_func: Any, recwarn: Any) -> None:
     msg = (
         "Missing value for BadAdamConf._target_. Check that it's properly annotated and overridden."
         "\nA common problem is forgetting to annotate _target_ as a string : '_target_: str = ...'"
     )
-    with pytest.raises(
+    with raises(
         InstantiationException,
         match=re.escape(msg),
     ):
-        utils.instantiate(BadAdamConf())
+        instantiate_func(BadAdamConf())
 
 
-def test_instantiate_with_missing_module() -> None:
+def test_instantiate_with_missing_module(instantiate_func: Any) -> None:
 
-    with pytest.raises(
-        HydraException, match=re.escape("No module named 'some_missing_module'")
+    with raises(
+        ModuleNotFoundError, match=re.escape("No module named 'some_missing_module'")
     ):
         # can't instantiate when importing a missing module
-        utils.instantiate({"_target_": "tests.ClassWithMissingModule"})
+        instantiate_func({"_target_": "tests.ClassWithMissingModule"})
 
 
-def test_pass_extra_variables() -> None:
+def test_pass_extra_variables(instantiate_func: Any) -> None:
     cfg = OmegaConf.create({"_target_": "tests.AClass", "a": 10, "b": 20})
-    assert utils.instantiate(cfg, c=30) == AClass(a=10, b=20, c=30)
+    assert instantiate_func(cfg, c=30) == AClass(a=10, b=20, c=30)
 
 
-def test_pass_extra_variables_objectconf() -> None:
-    with pytest.warns(expected_warning=UserWarning) as recwarn:
-        cfg = ObjectConf(target="tests.AClass", params={"a": 10, "b": 20})
-        assert utils.instantiate(cfg, c=30) == AClass(a=10, b=20, c=30)
-
-    assert recwarn[0].message.args[0] == objectconf_depreacted
-    assert recwarn[1].message.args[0] == target_field_deprecated.format(field="target")
-
-
-##################################
-# Testing deprecated logic below #
-##################################
-
-
-@pytest.mark.parametrize(  # type: ignore
-    "input_conf, passthrough, expected",
+@mark.parametrize(
+    "src, passthrough, expected",
     [
-        pytest.param(
-            {"target": "tests.AClass", "params": {"a": 10, "b": 20, "c": 30, "d": 40}},
-            {},
-            AClass(10, 20, 30, 40),
-            id="class",
-        ),
-        pytest.param(
-            {"target": "tests.AClass", "params": {"b": 20, "c": 30}},
-            {"a": 10, "d": 40},
-            AClass(10, 20, 30, 40),
-            id="class+override",
-        ),
-        pytest.param(
-            {"target": "tests.AClass", "params": {"b": 200, "c": "${params.b}"}},
-            {"a": 10, "b": 99, "d": 40},
-            AClass(10, 99, 99, 40),
-            id="class+override+interpolation",
-        ),
-        # Check class and static methods
-        pytest.param(
-            {"target": "tests.ASubclass.class_method", "params": {"y": 10}},
-            {},
-            ASubclass(11),
-            id="class_method",
-        ),
-        pytest.param(
-            {"target": "tests.AClass.static_method", "params": {"z": 43}},
-            {},
-            43,
-            id="static_method",
-        ),
-        # Check nested types and static methods
-        pytest.param(
-            {"target": "tests.NestingClass", "params": {}},
-            {},
-            NestingClass(ASubclass(10)),
-            id="class_with_nested_class",
-        ),
-        pytest.param(
-            {"target": "tests.nesting.a.class_method", "params": {"y": 10}},
-            {},
-            ASubclass(11),
-            id="class_method_on_an_object_nested_in_a_global",
-        ),
-        pytest.param(
-            {"target": "tests.nesting.a.static_method", "params": {"z": 43}},
-            {},
-            43,
-            id="static_method_on_an_object_nested_in_a_global",
-        ),
-        # Check that default value is respected
-        pytest.param(
-            {"target": "tests.AClass", "params": {"b": 200, "c": "${params.b}"}},
-            {"a": 10},
-            AClass(10, 200, 200, "default_value"),
-            id="instantiate_respects_default_value",
-        ),
-        pytest.param(
-            {"target": "tests.AClass", "params": {}},
-            {"a": 10, "b": 20, "c": 30},
-            AClass(10, 20, 30, "default_value"),
-            id="instantiate_respects_default_value",
-        ),
-        # call a function from a module
-        pytest.param(
-            {"target": "tests.module_function", "params": {"x": 43}},
-            {},
-            43,
-            id="call_function_in_module",
-        ),
-        # Check builtins
-        pytest.param(
-            {"target": "builtins.str", "params": {"object": 43}},
-            {},
-            "43",
-            id="builtin_types",
-        ),
-        # Check that none is instantiated correctly
-        pytest.param(
-            None,
-            {},
-            None,
-            id="instantiate_none",
-        ),
-        # passthrough
-        pytest.param(
-            {"target": "tests.AClass"},
-            {"a": 10, "b": 20, "c": 30},
-            AClass(a=10, b=20, c=30),
-            id="passthrough",
-        ),
-        pytest.param(
-            {"target": "tests.AClass"},
-            {"a": 10, "b": 20, "c": 30, "d": {"x": IllegalType()}},
-            AClass(a=10, b=20, c=30, d={"x": IllegalType()}),
-            id="passthrough",
-        ),
-    ],
-)
-def test_class_instantiate_deprecated(
-    input_conf: Any, passthrough: Dict[str, Any], expected: Any, recwarn: Any
-) -> Any:
-    conf = OmegaConf.create(input_conf)
-    assert isinstance(conf, DictConfig)
-    conf_copy = copy.deepcopy(conf)
-    obj = utils.instantiate(conf, **passthrough)
-    assert obj == expected
-    # make sure config is not modified by instantiate
-    assert conf == conf_copy
-
-
-def test_object_conf_deprecated() -> None:
-    with pytest.warns(UserWarning) as recwarn:
-        cfg = ObjectConf(target="tests.AClass", params={"a": 10, "b": 20})
-        ret = utils.instantiate(cfg, c=30)
-    assert ret == AClass(a=10, b=20, c=30)
-    assert recwarn[0].message.args[0] == objectconf_depreacted
-    assert recwarn[1].message.args[0] == target_field_deprecated.format(field="target")
-
-
-@pytest.mark.parametrize(  # type: ignore
-    "input_conf, passthrough, expected",
-    [
-        pytest.param(
+        # direct
+        param(
             {
-                "node": {
-                    "cls": "tests.AClass",
-                    "params": {"a": "${value}", "b": 20, "c": 30, "d": 40},
+                "_target_": "tests.Tree",
+                "value": 1,
+                "left": {
+                    "_target_": "tests.Tree",
+                    "value": 21,
                 },
-                "value": 99,
+                "right": {
+                    "_target_": "tests.Tree",
+                    "value": 22,
+                },
             },
             {},
-            AClass(99, 20, 30, 40),
-            id="deprecated:interpolation_into_parent",
+            Tree(value=1, left=Tree(value=21), right=Tree(value=22)),
+            id="recursive:direct:dict",
+        ),
+        param(
+            {"_target_": "tests.Tree"},
+            {"value": 1},
+            Tree(value=1),
+            id="recursive:direct:dict:passthrough",
+        ),
+        param(
+            {"_target_": "tests.Tree"},
+            {"value": 1, "left": {"_target_": "tests.Tree", "value": 2}},
+            Tree(value=1, left=Tree(2)),
+            id="recursive:direct:dict:passthrough",
+        ),
+        param(
+            {"_target_": "tests.Tree"},
+            {
+                "value": 1,
+                "left": {"_target_": "tests.Tree", "value": 2},
+                "right": {"_target_": "tests.Tree", "value": 3},
+            },
+            Tree(value=1, left=Tree(2), right=Tree(3)),
+            id="recursive:direct:dict:passthrough",
+        ),
+        param(
+            {"_target_": "tests.Tree"},
+            {"value": IllegalType()},
+            Tree(value=IllegalType()),
+            id="recursive:direct:dict:passthrough:incompatible_value",
+        ),
+        param(
+            {"_target_": "tests.Tree"},
+            {"value": 1, "left": {"_target_": "tests.Tree", "value": IllegalType()}},
+            Tree(value=1, left=Tree(value=IllegalType())),
+            id="recursive:direct:dict:passthrough:incompatible_value",
+        ),
+        param(
+            TreeConf(
+                value=1,
+                left=TreeConf(value=21),
+                right=TreeConf(value=22),
+            ),
+            {},
+            Tree(value=1, left=Tree(value=21), right=Tree(value=22)),
+            id="recursive:direct:dataclass",
+        ),
+        param(
+            TreeConf(
+                value=1,
+                left=TreeConf(value=21),
+            ),
+            {"right": {"value": 22}},
+            Tree(value=1, left=Tree(value=21), right=Tree(value=22)),
+            id="recursive:direct:dataclass:passthrough",
+        ),
+        param(
+            TreeConf(
+                value=1,
+                left=TreeConf(value=21),
+            ),
+            {"right": TreeConf(value=22)},
+            Tree(value=1, left=Tree(value=21), right=Tree(value=22)),
+            id="recursive:direct:dataclass:passthrough",
+        ),
+        param(
+            TreeConf(
+                value=1,
+                left=TreeConf(value=21),
+            ),
+            {
+                "right": TreeConf(value=IllegalType()),
+            },
+            Tree(value=1, left=Tree(value=21), right=Tree(value=IllegalType())),
+            id="recursive:direct:dataclass:passthrough",
+        ),
+        # list
+        # note that passthrough to a list element is not currently supported
+        param(
+            ComposeConf(
+                transforms=[
+                    CenterCropConf(size=10),
+                    RotationConf(degrees=45),
+                ]
+            ),
+            {},
+            Compose(
+                transforms=[
+                    CenterCrop(size=10),
+                    Rotation(degrees=45),
+                ]
+            ),
+            id="recursive:list:dataclass",
+        ),
+        param(
+            {
+                "_target_": "tests.Compose",
+                "transforms": [
+                    {"_target_": "tests.CenterCrop", "size": 10},
+                    {"_target_": "tests.Rotation", "degrees": 45},
+                ],
+            },
+            {},
+            Compose(
+                transforms=[
+                    CenterCrop(size=10),
+                    Rotation(degrees=45),
+                ]
+            ),
+            id="recursive:list:dict",
+        ),
+        # map
+        param(
+            MappingConf(
+                dictionary={
+                    "a": MappingConf(),
+                    "b": MappingConf(),
+                }
+            ),
+            {},
+            Mapping(
+                dictionary={
+                    "a": Mapping(),
+                    "b": Mapping(),
+                }
+            ),
+            id="recursive:map:dataclass",
+        ),
+        param(
+            {
+                "_target_": "tests.Mapping",
+                "dictionary": {
+                    "a": {"_target_": "tests.Mapping"},
+                    "b": {"_target_": "tests.Mapping"},
+                },
+            },
+            {},
+            Mapping(
+                dictionary={
+                    "a": Mapping(),
+                    "b": Mapping(),
+                }
+            ),
+            id="recursive:map:dict",
+        ),
+        param(
+            {
+                "_target_": "tests.Mapping",
+                "dictionary": {
+                    "a": {"_target_": "tests.Mapping"},
+                },
+            },
+            {
+                "dictionary": {
+                    "b": {"_target_": "tests.Mapping"},
+                },
+            },
+            Mapping(
+                dictionary={
+                    "a": Mapping(),
+                    "b": Mapping(),
+                }
+            ),
+            id="recursive:map:dict:passthrough",
         ),
     ],
 )
-def test_interpolation_accessing_parent_deprecated(
-    input_conf: Any, passthrough: Dict[str, Any], expected: Any, recwarn: Any
-) -> Any:
-    input_conf = OmegaConf.create(input_conf)
-    obj = utils.instantiate(input_conf.node, **passthrough)
+def test_recursive_instantiation(
+    instantiate_func: Any,
+    config: Any,
+    passthrough: Dict[str, Any],
+    expected: Any,
+) -> None:
+    obj = instantiate_func(config, **passthrough)
     assert obj == expected
+
+
+@mark.parametrize(
+    ("src", "passthrough", "expected"),
+    [
+        param(
+            {
+                "_target_": "tests.Tree",
+                "value": 1,
+                "left": {
+                    "_target_": "tests.Tree",
+                    "value": 21,
+                },
+            },
+            {},
+            Tree(value=1, left=Tree(value=21)),
+            id="default",
+        ),
+        param(
+            {
+                "_target_": "tests.Tree",
+                "_recursive_": True,
+                "value": 1,
+                "left": {
+                    "_target_": "tests.Tree",
+                    "value": 21,
+                },
+            },
+            {"_recursive_": True},
+            Tree(value=1, left=Tree(value=21)),
+            id="cfg:true,override:true",
+        ),
+        param(
+            {
+                "_target_": "tests.Tree",
+                "_recursive_": True,
+                "value": 1,
+                "left": {
+                    "_target_": "tests.Tree",
+                    "value": 21,
+                },
+            },
+            {"_recursive_": False},
+            Tree(value=1, left={"_target_": "tests.Tree", "value": 21}),
+            id="cfg:true,override:false",
+        ),
+        param(
+            {
+                "_target_": "tests.Tree",
+                "_recursive_": False,
+                "value": 1,
+                "left": {
+                    "_target_": "tests.Tree",
+                    "value": 21,
+                },
+            },
+            {"_recursive_": True},
+            Tree(value=1, left=Tree(value=21)),
+            id="cfg:false,override:true",
+        ),
+        param(
+            {
+                "_target_": "tests.Tree",
+                "_recursive_": False,
+                "value": 1,
+                "left": {
+                    "_target_": "tests.Tree",
+                    "value": 21,
+                },
+            },
+            {"_recursive_": False},
+            Tree(value=1, left={"_target_": "tests.Tree", "value": 21}),
+            id="cfg:false,override:false",
+        ),
+        param(
+            {
+                "_target_": "tests.Tree",
+                "value": 1,
+                "left": {
+                    "_target_": "tests.Tree",
+                    "value": 2,
+                    "left": {
+                        "_target_": "tests.Tree",
+                        "value": 3,
+                    },
+                },
+            },
+            {},
+            Tree(value=1, left=Tree(value=2, left=Tree(value=3))),
+            id="3_levels:default",
+        ),
+        param(
+            {
+                "_target_": "tests.Tree",
+                "_recursive_": False,
+                "value": 1,
+                "left": {
+                    "_target_": "tests.Tree",
+                    "value": 2,
+                    "left": {
+                        "_target_": "tests.Tree",
+                        "value": 3,
+                    },
+                },
+            },
+            {},
+            Tree(
+                value=1,
+                left={
+                    "_target_": "tests.Tree",
+                    "value": 2,
+                    "left": {"_target_": "tests.Tree", "value": 3},
+                },
+            ),
+            id="3_levels:cfg1=false",
+        ),
+        param(
+            {
+                "_target_": "tests.Tree",
+                "value": 1,
+                "left": {
+                    "_target_": "tests.Tree",
+                    "_recursive_": False,
+                    "value": 2,
+                    "left": {
+                        "_target_": "tests.Tree",
+                        "value": 3,
+                    },
+                },
+            },
+            {},
+            Tree(
+                value=1, left=Tree(value=2, left={"_target_": "tests.Tree", "value": 3})
+            ),
+            id="3_levels:cfg2=false",
+        ),
+    ],
+)
+def test_recursive_override(
+    instantiate_func: Any,
+    config: Any,
+    passthrough: Any,
+    expected: Any,
+) -> None:
+    obj = instantiate_func(config, **passthrough)
+    assert obj == expected
+
+
+@mark.parametrize(
+    ("src", "passthrough", "expected"),
+    [
+        param(
+            {"_target_": "tests.AClass", "a": 10, "b": 20, "c": 30, "d": 40},
+            {"_target_": "tests.BClass"},
+            BClass(10, 20, 30, 40),
+            id="str:override_same_args",
+        ),
+        param(
+            {"_target_": "tests.AClass", "a": 10, "b": 20, "c": 30, "d": 40},
+            {"_target_": BClass},
+            BClass(10, 20, 30, 40),
+            id="type:override_same_args",
+        ),
+        param(
+            {"_target_": "tests.AClass", "a": 10, "b": 20},
+            {"_target_": "tests.BClass"},
+            BClass(10, 20, "c", "d"),
+            id="str:override_other_args",
+        ),
+        param(
+            {"_target_": "tests.AClass", "a": 10, "b": 20},
+            {"_target_": BClass},
+            BClass(10, 20, "c", "d"),
+            id="type:override_other_args",
+        ),
+        param(
+            {
+                "_target_": "tests.AClass",
+                "a": 10,
+                "b": 20,
+                "c": {
+                    "_target_": "tests.AClass",
+                    "a": "aa",
+                    "b": "bb",
+                    "c": "cc",
+                },
+            },
+            {
+                "_target_": "tests.BClass",
+                "c": {
+                    "_target_": "tests.BClass",
+                },
+            },
+            BClass(10, 20, BClass(a="aa", b="bb", c="cc"), "d"),
+            id="str:recursive_override",
+        ),
+        param(
+            {
+                "_target_": "tests.AClass",
+                "a": 10,
+                "b": 20,
+                "c": {
+                    "_target_": "tests.AClass",
+                    "a": "aa",
+                    "b": "bb",
+                    "c": "cc",
+                },
+            },
+            {"_target_": BClass, "c": {"_target_": BClass}},
+            BClass(10, 20, BClass(a="aa", b="bb", c="cc"), "d"),
+            id="type:recursive_override",
+        ),
+    ],
+)
+def test_override_target(
+    instantiate_func: Any, config: Any, passthrough: Any, expected: Any
+) -> None:
+    obj = instantiate_func(config, **passthrough)
+    assert obj == expected
+
+
+@mark.parametrize(
+    "config, passthrough, expected",
+    [
+        param(
+            {"_target_": tests.AnotherClass, "x": 10},
+            {},
+            AnotherClass(10),
+            id="class_in_config_dict",
+        ),
+    ],
+)
+def test_instantiate_from_class_in_dict(
+    instantiate_func: Any, config: Any, passthrough: Any, expected: Any
+) -> None:
+    config_copy = copy.deepcopy(config)
+    assert instantiate_func(config, **passthrough) == expected
+    assert config == config_copy
+
+
+@mark.parametrize(
+    "config, passthrough, expected",
+    [
+        param(
+            OmegaConf.create({"_target_": tests.AClass}),
+            {},
+            AClass(10, 20, 30, 40),
+            id="class_in_config_dict",
+        ),
+    ],
+)
+def test_instantiate_from_dataclass_in_dict_fails(
+    instantiate_func: Any, config: Any, passthrough: Any, expected: Any
+) -> None:
+    # not the best error, but it will get the user to check their input config.
+    msg = "Unsupported target type: DictConfig. value: {'a': '???', 'b': '???', 'c': '???', 'd': 'default_value'}"
+    with raises(
+        InstantiationException,
+        match=re.escape(msg),
+    ):
+        assert instantiate_func(config, **passthrough) == expected
+
+
+@mark.parametrize(
+    "primitive,expected_primitive",
+    [
+        param(None, False, id="unspecified"),
+        param(ConvertMode.NONE, False, id="none"),
+        param(ConvertMode.PARTIAL, True, id="partial"),
+        param(ConvertMode.ALL, True, id="all"),
+    ],
+)
+@mark.parametrize(
+    "input_,expected",
+    [
+        param(
+            {
+                "obj": {
+                    "_target_": "tests.AClass",
+                    "a": {"foo": "bar"},
+                    "b": OmegaConf.create({"foo": "bar"}),
+                    "c": [1, 2, 3],
+                    "d": OmegaConf.create([1, 2, 3]),
+                },
+            },
+            AClass(
+                a={"foo": "bar"},
+                b={"foo": "bar"},
+                c=[1, 2, 3],
+                d=[1, 2, 3],
+            ),
+            id="simple",
+        ),
+        param(
+            {
+                "value": 99,
+                "obj": {
+                    "_target_": "tests.AClass",
+                    "a": {"foo": "${value}"},
+                    "b": OmegaConf.create({"foo": "${value}"}),
+                    "c": [1, "${value}"],
+                    "d": OmegaConf.create([1, "${value}"]),
+                },
+            },
+            AClass(
+                a={"foo": 99},
+                b={"foo": 99},
+                c=[1, 99],
+                d=[1, 99],
+            ),
+            id="interpolation",
+        ),
+    ],
+)
+def test_convert_params_override(
+    instantiate_func: Any,
+    primitive: Optional[bool],
+    expected_primitive: bool,
+    input_: Any,
+    expected: Any,
+) -> None:
+    input_cfg = OmegaConf.create(input_)
+    if primitive is not None:
+        ret = instantiate_func(input_cfg.obj, _convert_=primitive)
+    else:
+        ret = instantiate_func(input_cfg.obj)
+
+    expected_list: Any
+    expected_dict: Any
+    if expected_primitive is True:
+        expected_list = list
+        expected_dict = dict
+    else:
+        expected_list = ListConfig
+        expected_dict = DictConfig
+
+    assert ret == expected
+    assert isinstance(ret.a, expected_dict)
+    assert isinstance(ret.b, expected_dict)
+    assert isinstance(ret.c, expected_list)
+    assert isinstance(ret.d, expected_list)
+
+
+@mark.parametrize(
+    "convert_mode",
+    [
+        param(None, id="none"),
+        param(ConvertMode.NONE, id="none"),
+        param("none", id="none"),
+        param(ConvertMode.PARTIAL, id="partial"),
+        param("partial", id="partial"),
+        param(ConvertMode.ALL, id="all"),
+        param("all", id="all"),
+    ],
+)
+@mark.parametrize(
+    "input_,expected",
+    [
+        param(
+            {
+                "value": 99,
+                "obj": {
+                    "_target_": "tests.SimpleClass",
+                    "a": {
+                        "_target_": "tests.SimpleClass",
+                        "a": {"foo": "${value}"},
+                        "b": [1, "${value}"],
+                    },
+                    "b": None,
+                },
+            },
+            SimpleClass(a={"foo": 99}, b=[1, 99]),
+            id="simple",
+        ),
+    ],
+)
+def test_convert_params(
+    instantiate_func: Any, input_: Any, expected: Any, convert_mode: Any
+) -> None:
+    cfg = OmegaConf.create(input_)
+    kwargs = {"a": {"_convert_": convert_mode}}
+    ret = instantiate_func(cfg.obj, **kwargs)
+
+    if convert_mode in (ConvertMode.PARTIAL, ConvertMode.ALL):
+        assert isinstance(ret.a.a, dict)
+        assert isinstance(ret.a.b, list)
+    elif convert_mode in (None, ConvertMode.NONE):
+        assert isinstance(ret.a.a, DictConfig)
+        assert isinstance(ret.a.b, ListConfig)
+    else:
+        assert False
+
+    assert ret.a == expected
+
+
+@mark.parametrize("nested_recursive", [True, False])
+def test_convert_and_recursive_node(
+    instantiate_func: Any, nested_recursive: bool
+) -> None:
+    cfg = {
+        "_target_": "tests.SimpleClass",
+        "a": {
+            "_target_": "tests.SimpleClass",
+            "_convert_": "all",
+            "_recursive_": nested_recursive,
+            "a": {},
+            "b": [],
+        },
+        "b": None,
+    }
+
+    obj = instantiate_func(cfg)
+    assert isinstance(obj.a.a, dict)
+    assert isinstance(obj.a.b, list)
+
+
+@mark.parametrize(
+    "src,expected",
+    [
+        param(
+            {
+                "value": 99,
+                "obj": {
+                    "_target_": "tests.SimpleDataClass",
+                    "a": {
+                        "_target_": "tests.SimpleDataClass",
+                        "a": {"foo": "${value}"},
+                        "b": [1, "${value}"],
+                    },
+                    "b": None,
+                },
+            },
+            (
+                SimpleDataClass(
+                    a=SimpleDataClass(
+                        a=OmegaConf.create({"foo": 99}), b=OmegaConf.create([1, 99])
+                    ),
+                    b=None,
+                ),
+                SimpleDataClass(a=SimpleDataClass(a={"foo": 99}, b=[1, 99]), b=None),
+                SimpleDataClass(a=SimpleDataClass(a={"foo": 99}, b=[1, 99]), b=None),
+            ),
+            id="dataclass+dataclass",
+        ),
+        param(
+            {
+                "value": 99,
+                "obj": {
+                    "_target_": "tests.SimpleClass",
+                    "a": {
+                        "_target_": "tests.SimpleDataClass",
+                        "a": {"foo": "${value}"},
+                        "b": [1, "${value}"],
+                    },
+                    "b": None,
+                },
+            },
+            (
+                SimpleClass(
+                    a=SimpleDataClass(
+                        a=OmegaConf.create({"foo": 99}), b=OmegaConf.create([1, 99])
+                    ),
+                    b=None,
+                ),
+                SimpleClass(a=SimpleDataClass(a={"foo": 99}, b=[1, 99]), b=None),
+                SimpleClass(a=SimpleDataClass(a={"foo": 99}, b=[1, 99]), b=None),
+            ),
+            id="class+dataclass",
+        ),
+        param(
+            {
+                "value": 99,
+                "obj": {
+                    "a": {
+                        "_target_": "tests.SimpleDataClass",
+                        "a": {"foo": "${value}"},
+                        "b": [1, "${value}"],
+                    },
+                    "b": None,
+                },
+            },
+            (
+                # a is a DictConfig because of top level DictConfig
+                OmegaConf.create(
+                    {
+                        "a": SimpleDataClass(
+                            a=OmegaConf.create({"foo": 99}), b=OmegaConf.create([1, 99])
+                        ),
+                        "b": None,
+                    }
+                ),
+                {"a": SimpleDataClass(a={"foo": 99}, b=[1, 99]), "b": None},
+                {"a": SimpleDataClass(a={"foo": 99}, b=[1, 99]), "b": None},
+            ),
+            id="dict+dataclass",
+        ),
+    ],
+)
+def test_instantiate_convert_dataclasses(
+    instantiate_func: Any, config: Any, expected: Tuple[Any, Any, Any]
+) -> None:
+    """Instantiate on nested dataclass + dataclass."""
+    modes = [ConvertMode.NONE, ConvertMode.PARTIAL, ConvertMode.ALL]
+    for exp, mode in zip(expected, modes):
+        # create DictConfig to ensure interpolations are working correctly when we pass a cfg.obj
+        cfg = OmegaConf.create(config)
+        instance = instantiate_func(cfg.obj, _convert_=mode)
+        assert instance == exp
+        assert recisinstance(instance, exp)
+
+
+@mark.parametrize(
+    ("mode", "expected_dict", "expected_list"),
+    [
+        param(ConvertMode.NONE, DictConfig, ListConfig, id="none"),
+        param(ConvertMode.ALL, dict, list, id="all"),
+        param(ConvertMode.PARTIAL, dict, list, id="partial"),
+    ],
+)
+def test_instantiated_regular_class_container_types(
+    instantiate_func: Any, mode: Any, expected_dict: Any, expected_list: Any
+) -> None:
+    cfg = {"_target_": "tests.SimpleClass", "a": {}, "b": []}
+    ret = instantiate_func(cfg, _convert_=mode)
+    assert isinstance(ret.a, expected_dict)
+    assert isinstance(ret.b, expected_list)
+
+    cfg2 = {
+        "_target_": "tests.SimpleClass",
+        "a": {"_target_": "tests.SimpleClass", "a": {}, "b": []},
+        "b": [{"_target_": "tests.SimpleClass", "a": {}, "b": []}],
+    }
+    ret = instantiate_func(cfg2, _convert_=mode)
+    assert isinstance(ret.a.a, expected_dict)
+    assert isinstance(ret.a.b, expected_list)
+    assert isinstance(ret.b[0].a, expected_dict)
+    assert isinstance(ret.b[0].b, expected_list)
+
+
+def test_instantiated_regular_class_container_types_partial(
+    instantiate_func: Any,
+) -> None:
+    cfg = {"_target_": "tests.SimpleClass", "a": {}, "b": User()}
+    ret = instantiate_func(cfg, _convert_=ConvertMode.PARTIAL)
+    assert isinstance(ret.a, dict)
+    assert isinstance(ret.b, DictConfig)
+    assert OmegaConf.get_type(ret.b) is User
+
+
+def test_instantiated_regular_class_container_types_partial2(
+    instantiate_func: Any,
+) -> None:
+    cfg = {"_target_": "tests.SimpleClass", "a": [{}, User()], "b": None}
+    ret = instantiate_func(cfg, _convert_=ConvertMode.PARTIAL)
+    assert isinstance(ret.a, list)
+    assert isinstance(ret.a[0], dict)
+    assert isinstance(ret.a[1], DictConfig)
+    assert OmegaConf.get_type(ret.a[1]) is User
+
+
+@mark.parametrize(
+    "src",
+    [
+        {
+            "_target_": "tests.SimpleClass",
+            "a": {"_target_": "tests.SimpleClass", "a": {}, "b": User},
+            "b": None,
+        }
+    ],
+)
+def test_instantiated_regular_class_container_types_partial__recursive(
+    instantiate_func: Any, config: Any
+) -> None:
+    ret = instantiate_func(config, _convert_=ConvertMode.PARTIAL)
+    assert isinstance(ret.a, SimpleClass)
+    assert isinstance(ret.a.a, dict)
+    assert isinstance(ret.a.b, DictConfig)
+    assert OmegaConf.get_type(ret.a.b) is User
+
+
+@mark.parametrize(
+    "input_,is_primitive,expected",
+    [
+        param(
+            {
+                "value": 99,
+                "obj": SimpleClassPrimitiveConf(
+                    a={"foo": "${value}"}, b=[1, "${value}"]
+                ),
+            },
+            True,
+            SimpleClass(a={"foo": 99}, b=[1, 99]),
+            id="primitive_specified_true",
+        ),
+        param(
+            {
+                "value": 99,
+                "obj": SimpleClassNonPrimitiveConf(
+                    a={"foo": "${value}"}, b=[1, "${value}"]
+                ),
+            },
+            False,
+            SimpleClass(a={"foo": 99}, b=[1, 99]),
+            id="primitive_specified_false",
+        ),
+        param(
+            {
+                "value": 99,
+                "obj": SimpleClassDefaultPrimitiveConf(
+                    a={"foo": "${value}"}, b=[1, "${value}"]
+                ),
+            },
+            False,
+            SimpleClass(a={"foo": 99}, b=[1, 99]),
+            id="default_behavior",
+        ),
+    ],
+)
+def test_convert_in_config(
+    instantiate_func: Any, input_: Any, is_primitive: bool, expected: Any
+) -> None:
+    cfg = OmegaConf.create(input_)
+    ret = instantiate_func(cfg.obj)
+    assert ret == expected
+
+    if is_primitive:
+        assert isinstance(ret.a, dict)
+        assert isinstance(ret.b, list)
+    else:
+        assert isinstance(ret.a, DictConfig)
+        assert isinstance(ret.b, ListConfig)
+
+
+def test_nested_dataclass_with_partial_convert(instantiate_func: Any) -> None:
+    # dict
+    cfg = OmegaConf.structured(NestedConf)
+    ret = instantiate_func(cfg, _convert_="partial")
+    assert isinstance(ret.a, DictConfig) and OmegaConf.get_type(ret.a) == User
+    assert isinstance(ret.b, DictConfig) and OmegaConf.get_type(ret.b) == User
+    expected = SimpleClass(a=User(name="a", age=1), b=User(name="b", age=2))
+    assert ret == expected
+
+    # list
+    lst = [User(name="a", age=1)]
+    cfg = OmegaConf.structured(NestedConf(a=lst))
+    ret = instantiate_func(cfg, _convert_="partial")
+    assert isinstance(ret.a, list) and OmegaConf.get_type(ret.a[0]) == User
+    assert isinstance(ret.b, DictConfig) and OmegaConf.get_type(ret.b) == User
+    expected = SimpleClass(a=lst, b=User(name="b", age=2))
+    assert ret == expected
+
+
+class DictValues:
+    def __init__(self, d: Dict[str, User]):
+        self.d = d
+
+
+class ListValues:
+    def __init__(self, d: List[User]):
+        self.d = d
+
+
+def test_dict_with_structured_config(instantiate_func: Any) -> None:
+    @dataclass
+    class DictValuesConf:
+        _target_: str = "tests.test_utils.DictValues"
+        d: Dict[str, User] = MISSING
+
+    schema = OmegaConf.structured(DictValuesConf)
+    cfg = OmegaConf.merge(schema, {"d": {"007": {"name": "Bond", "age": 7}}})
+    obj = instantiate_func(config=cfg, _convert_="none")
+    assert OmegaConf.is_dict(obj.d)
+    assert OmegaConf.get_type(obj.d["007"]) == User
+
+    obj = instantiate_func(config=cfg, _convert_="partial")
+    assert isinstance(obj.d, dict)
+    assert OmegaConf.get_type(obj.d["007"]) == User
+
+    obj = instantiate_func(config=cfg, _convert_="all")
+    assert isinstance(obj.d, dict)
+    assert isinstance(obj.d["007"], dict)
+
+
+def test_list_with_structured_config(instantiate_func: Any) -> None:
+    @dataclass
+    class ListValuesConf:
+        _target_: str = "tests.test_utils.ListValues"
+        d: List[User] = MISSING
+
+    schema = OmegaConf.structured(ListValuesConf)
+    cfg = OmegaConf.merge(schema, {"d": [{"name": "Bond", "age": 7}]})
+
+    obj = instantiate_func(config=cfg, _convert_="none")
+    assert isinstance(obj.d, ListConfig)
+    assert OmegaConf.get_type(obj.d[0]) == User
+
+    obj = instantiate_func(config=cfg, _convert_="partial")
+    assert isinstance(obj.d, list)
+    assert OmegaConf.get_type(obj.d[0]) == User
+
+    obj = instantiate_func(config=cfg, _convert_="all")
+    assert isinstance(obj.d, list)
+    assert isinstance(obj.d[0], dict)
+
+
+def test_list_as_none(instantiate_func: Any) -> None:
+    @dataclass
+    class ListValuesConf:
+        _target_: str = "tests.test_utils.ListValues"
+        d: Optional[List[User]] = None
+
+    cfg = OmegaConf.structured(ListValuesConf)
+    obj = instantiate_func(config=cfg)
+    assert obj.d is None

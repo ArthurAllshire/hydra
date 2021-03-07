@@ -4,6 +4,8 @@ title: Compose API
 sidebar_label: Compose API
 ---
 
+import GithubLink,{ExampleGithubLink} from "@site/src/components/GithubLink"
+
 The compose API can compose a config similarly to `@hydra.main()` anywhere in the code.  
 Prior to calling compose(), you have to initialize Hydra: This can be done by using the standard `@hydra.main()`
 or by calling one of the initialization methods listed below.
@@ -15,8 +17,8 @@ For example:
 
 - Inside a Jupyter notebook ([Example](../advanced/jupyter_notebooks.md))
 - Inside a unit test ([Example](../advanced/unit_testing.md))
-- In parts of your application that does not have access to the command line ([Example](https://github.com/facebookresearch/hydra/tree/master/examples/advanced/ad_hoc_composition))
-- If you want to compose multiple configuration objects ([Example with Ray](https://github.com/facebookresearch/hydra/blob/master/examples/advanced/ray_example/ray_compose_example.py))
+- In parts of your application that does not have access to the command line (<GithubLink to="examples/advanced/ad_hoc_composition">Example</GithubLink>).
+- To compose multiple configuration objects (<GithubLink to="examples/advanced/ray_example/ray_compose_example.py">Example with Ray</GithubLink>).
 
 <div class="alert alert--info" role="alert">
 Please avoid using the Compose API in cases where <b>@hydra.main()</b> can be used.  
@@ -56,14 +58,12 @@ if __name__ == "__main__":
 def compose(
     config_name: Optional[str] = None,
     overrides: List[str] = [],
-    strict: Optional[bool] = None,
     return_hydra_config: bool = False,
 ) -> DictConfig:
     """
     :param config_name: the name of the config
            (usually the file name without the .yaml extension)
     :param overrides: list of overrides for config file
-    :param strict: optionally override the default strict mode
     :param return_hydra_config: True to return the hydra config node in the result
     :return: the composed config
     """
@@ -73,7 +73,6 @@ def compose(
 def initialize(
     config_path: Optional[str] = None,
     job_name: Optional[str] = "app",
-    strict: Optional[bool] = None,
     caller_stack_depth: int = 1,
 ) -> None:
     """
@@ -88,7 +87,6 @@ def initialize(
     - Jupyter notebooks.
     :param config_path: path relative to the parent of the caller
     :param job_name: the value for hydra.job.name (By default it is automatically detected based on the caller)
-    :param strict: (Deprecated), will be removed in the next major version
     :param caller_stack_depth: stack depth of the caller, defaults to 1 (direct caller).
     """
 ```

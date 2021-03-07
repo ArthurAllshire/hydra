@@ -1,5 +1,3 @@
-# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-import pytest
 from hydra.core.plugins import Plugins
 from hydra.plugins.launcher import Launcher
 from hydra.test_utils.launcher_common_tests import (
@@ -7,6 +5,9 @@ from hydra.test_utils.launcher_common_tests import (
     LauncherTestSuite,
 )
 from hydra.test_utils.test_utils import TSweepRunner, chdir_plugin_root
+
+# Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
+from pytest import mark
 
 from hydra_plugins.hydra_rq_launcher.rq_launcher import RQLauncher
 
@@ -20,10 +21,9 @@ def test_discovery() -> None:
     ]
 
 
-@pytest.mark.filterwarnings(
-    "ignore::DeprecationWarning"
-)  # https://github.com/rq/rq/issues/1244
-@pytest.mark.parametrize("launcher_name, overrides", [("rq", [])])
+# https://github.com/rq/rq/issues/1244
+@mark.filterwarnings("ignore::DeprecationWarning")
+@mark.parametrize("launcher_name, overrides", [("rq", [])])
 class TestRQLauncher(LauncherTestSuite):
     """
     Run the Launcher test suite on this launcher.
@@ -32,12 +32,11 @@ class TestRQLauncher(LauncherTestSuite):
     pass
 
 
-@pytest.mark.filterwarnings(
-    "ignore::DeprecationWarning"
-)  # https://github.com/rq/rq/issues/1244
-@pytest.mark.parametrize(
+# https://github.com/rq/rq/issues/1244
+@mark.filterwarnings("ignore::DeprecationWarning")
+@mark.parametrize(
     "task_launcher_cfg, extra_flags",
-    [({"defaults": [{"hydra/launcher": "rq"}]}, ["-m"])],
+    [({}, ["-m", "hydra/launcher=rq"])],
 )
 class TestRQLauncherIntegration(IntegrationTestSuite):
     """
@@ -47,9 +46,8 @@ class TestRQLauncherIntegration(IntegrationTestSuite):
     pass
 
 
-@pytest.mark.filterwarnings(  # type: ignore
-    "ignore::DeprecationWarning"
-)  # https://github.com/rq/rq/issues/1244
+# https://github.com/rq/rq/issues/1244
+@mark.filterwarnings("ignore::DeprecationWarning")
 def test_example_app(hydra_sweep_runner: TSweepRunner) -> None:
     with hydra_sweep_runner(
         calling_file="example/my_app.py",

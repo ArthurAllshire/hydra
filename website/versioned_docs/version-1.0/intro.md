@@ -49,7 +49,7 @@ db:
 Application:
 ```python {4-6} title="my_app.py"
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 @hydra.main(config_name="config")
 def my_app(cfg : DictConfig) -> None:
@@ -106,7 +106,7 @@ db:
   driver: postgresql
   pass: drowssap
   timeout: 20
-  user: postgre_user
+  user: postgres_user
 website:
   domain: example.com
 ```
@@ -133,7 +133,7 @@ db:
   driver: postgresql
   pass: drowssap
   timeout: 10
-  user: postgre_user
+  user: postgres_user
 website:
     domain: example.com
 ```

@@ -1,15 +1,18 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import decimal
 import fnmatch
+import warnings
 from copy import copy
 from dataclasses import dataclass, field
 from enum import Enum
 from random import shuffle
+from textwrap import dedent
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Union, cast
 
 from omegaconf import OmegaConf
 from omegaconf._utils import is_structured_config
 
+from hydra._internal.grammar.utils import escape_special_characters
 from hydra.core.config_loader import ConfigLoader
 from hydra.core.object_type import ObjectType
 from hydra.errors import HydraException
@@ -20,7 +23,7 @@ class Quote(Enum):
     double = 1
 
 
-@dataclass
+@dataclass(frozen=True)
 class QuotedString:
     text: str
 
@@ -152,7 +155,8 @@ TransformerType = Callable[[ParsedElementType], Any]
 class OverrideType(Enum):
     CHANGE = 1
     ADD = 2
-    DEL = 3
+    FORCE_ADD = 3
+    DEL = 4
 
 
 class ValueType(Enum):
@@ -168,8 +172,7 @@ class ValueType(Enum):
 class Key:
     # the config-group or config dot-path
     key_or_group: str
-    pkg1: Optional[str] = None
-    pkg2: Optional[str] = None
+    package: Optional[str] = None
 
 
 @dataclass
@@ -224,10 +227,8 @@ class Override:
     # The parsed value (component after the =).
     _value: Union[ParsedElementType, ChoiceSweep, RangeSweep, IntervalSweep]
 
-    # When updating a config group option, the first package
-    pkg1: Optional[str] = None
-    # When updating a config group, the second package (used when renaming a package)
-    pkg2: Optional[str] = None
+    # Optional qualifying package
+    package: Optional[str] = None
 
     # Input line used to construct this
     input_line: Optional[str] = None
@@ -247,18 +248,24 @@ class Override:
         """
         return self.type == OverrideType.ADD
 
-    def get_source_package(self) -> Optional[str]:
-        return self.pkg1
-
-    def get_subject_package(self) -> Optional[str]:
-        return self.pkg1 if self.pkg2 is None else self.pkg2
+    def is_force_add(self) -> bool:
+        """
+        :return: True if this override represents a forced addition of a config value
+        """
+        return self.type == OverrideType.FORCE_ADD
 
     @staticmethod
     def _convert_value(value: ParsedElementType) -> Optional[ElementType]:
         if isinstance(value, list):
             return [Override._convert_value(x) for x in value]
         elif isinstance(value, dict):
-            return {k: Override._convert_value(v) for k, v in value.items()}
+
+            return {
+                # We ignore potential type mismatch here so as to let OmegaConf
+                # raise an explicit error in case of invalid type.
+                Override._convert_value(k): Override._convert_value(v)  # type: ignore
+                for k, v in value.items()
+            }
         elif isinstance(value, QuotedString):
             return value.text
         else:
@@ -332,16 +339,6 @@ class Override:
         iterator = cast(Iterator[str], self.sweep_iterator(transformer=Transformer.str))
         return iterator
 
-    def get_source_item(self) -> str:
-        pkg = self.get_source_package()
-        if pkg is None:
-            return self.key_or_group
-        else:
-            return f"{self.key_or_group}@{pkg}"
-
-    def is_package_rename(self) -> bool:
-        return self.pkg2 is not None
-
     def is_sweep_override(self) -> bool:
         return self.value_type is not None and self.value_type != ValueType.ELEMENT
 
@@ -370,20 +367,18 @@ class Override:
 
     def get_key_element(self) -> str:
         def get_key() -> str:
-            if self.pkg1 is None and self.pkg2 is None:
+            if self.package is None:
                 return self.key_or_group
-            elif self.pkg1 is not None and self.pkg2 is None:
-                return f"{self.key_or_group}@{self.pkg1}"
-            elif self.pkg1 is None and self.pkg2 is not None:
-                return f"{self.key_or_group}@:{self.pkg2}"
             else:
-                return f"{self.key_or_group}@{self.pkg1}:{self.pkg2}"
+                return f"{self.key_or_group}@{self.package}"
 
         def get_prefix() -> str:
             if self.is_delete():
                 return "~"
             elif self.is_add():
                 return "+"
+            elif self.is_force_add():
+                return "++"
             else:
                 return ""
 
@@ -411,17 +406,19 @@ class Override:
             )
             return "[" + s + "]"
         elif isinstance(value, dict):
-            s = comma.join(
-                [
-                    f"{k}{colon}{Override._get_value_element_as_str(v, space_after_sep=space_after_sep)}"
-                    for k, v in value.items()
-                ]
-            )
-            return "{" + s + "}"
-        elif isinstance(value, (str, int, bool, float)):
+            str_items = []
+            for k, v in value.items():
+                str_key = Override._get_value_element_as_str(k)
+                str_value = Override._get_value_element_as_str(
+                    v, space_after_sep=space_after_sep
+                )
+                str_items.append(f"{str_key}{colon}{str_value}")
+            return "{" + comma.join(str_items) + "}"
+        elif isinstance(value, str):
+            return escape_special_characters(value)
+        elif isinstance(value, (int, bool, float)):
             return str(value)
         elif is_structured_config(value):
-            print(value)
             return Override._get_value_element_as_str(
                 OmegaConf.to_container(OmegaConf.structured(value))
             )
@@ -452,3 +449,16 @@ class Override:
         return Override._get_value_element_as_str(
             self._value, space_after_sep=space_after_sep
         )
+
+    def validate(self) -> None:
+        if self.package is not None and "_name_" in self.package:
+            # DEPRECATED: remove in 1.2
+            url = "https://hydra.cc/docs/next/upgrades/1.0_to_1.1/changes_to_package_header"
+            warnings.warn(
+                category=UserWarning,
+                message=dedent(
+                    f"""\
+                    In override {self.input_line}: _name_ keyword is deprecated in packages, see {url}
+                    """
+                ),
+            )

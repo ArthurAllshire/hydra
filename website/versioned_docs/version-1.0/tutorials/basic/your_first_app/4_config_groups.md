@@ -3,7 +3,9 @@ id: config_groups
 title: Grouping config files
 ---
 
-[![Example](https://img.shields.io/badge/-Example-informational)](https://github.com/facebookresearch/hydra/tree/master/examples/tutorials/basic/your_first_hydra_app/4_config_groups)
+import {ExampleGithubLink} from "@site/src/components/GithubLink"
+
+<ExampleGithubLink to="examples/tutorials/basic/your_first_hydra_app/4_config_groups"/>
 
 Suppose you want to benchmark your application on each of PostgreSQL and MySQL. To do this, use config groups. 
 
@@ -65,7 +67,7 @@ db:
   driver: postgresql
   pass: drowssap
   timeout: 10
-  user: postgre_user
+  user: postgres_user
 ```
 
 Like before, you can still override individual values in the resulting config:
@@ -75,7 +77,7 @@ db:
   driver: postgresql
   pass: drowssap
   timeout: 20
-  user: postgre_user
+  user: postgres_user
 ```
 
 ### More advanced usages of config groups
