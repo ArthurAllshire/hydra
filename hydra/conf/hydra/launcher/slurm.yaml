@@ -1,3 +1,0 @@
-hydra:
-  launcher:
-    _target_: hydra._internal.core_plugins.slurm_launcher.SlurmLauncher
