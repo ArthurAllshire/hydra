@@ -66,7 +66,6 @@ class SlurmLauncher(Launcher):
         runs: List[JobReturn] = []
 
         for idx, overrides in enumerate(job_overrides):
-            print(overrides)
             idx = initial_job_idx + idx
             log.info("\t#{} : {}".format(idx, " ".join(filter_overrides(overrides))))
             sweep_config = self.config_loader.load_sweep_config(
@@ -81,7 +80,6 @@ class SlurmLauncher(Launcher):
             log.info("\tJob name : {}".format(slurm_utils.resolve_name(sweep_config.slurm.job_name)))
 
             slurm_utils.write_slurm(sweep_config)
-            print(filter_overrides(overrides))
             slurm_utils.write_sh(sweep_config, " ".join(filter_overrides(overrides)))
             slurm_utils.launch_job(sweep_config)
 
