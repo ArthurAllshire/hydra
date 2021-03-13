@@ -81,7 +81,7 @@ def write_sh(cfg, overrides):
         Path(scripts_dir).mkdir(parents=True, exist_ok=True)
 
     if 'conda' in cfg:
-        venv_sh = 'source /h/$USER/miniconda3/etc/profile.d/conda.sh\nconda activate {}'.format(cfg.conda)
+        venv_sh = 'source /h/$USER/.bashrc\nconda activate {}'.format(cfg.conda)
     elif 'venv' in cfg:
         venv_sh = '. /h/$USER/venv/{}/bin/activate'.format(cfg.venv)
     else:
